@@ -14,7 +14,9 @@ channel_layer = get_channel_layer()
 @receiver(user_logged_in)
 def on_user_logged_in(sender, token=None, user=None, **kwargs):
     cache.set(
-        token, user.id, settings.SIMPLE_JWT["ACCESS_TOKEN_LIFETIME"].total_seconds()
+        token,
+        user.id,
+        settings.SIMPLE_JWT["ACCESS_TOKEN_LIFETIME"].total_seconds(),
     )
 
 

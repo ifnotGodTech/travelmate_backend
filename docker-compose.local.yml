@@ -44,10 +44,10 @@ services:
   redis:
     image: docker.io/redis:6
     container_name: travelmate_backend_local_redis
-    
+
     volumes:
       - travelmate_backend_local_redis_data:/data
-    
+
 
   celeryworker:
     <<: *django
