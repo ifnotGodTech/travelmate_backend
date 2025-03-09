@@ -2,6 +2,7 @@
 """Base settings to build other settings files upon."""
 
 import ssl
+from datetime import timedelta
 from pathlib import Path
 
 import environ
@@ -354,3 +355,57 @@ SPECTACULAR_SETTINGS = {
 }
 # Your stuff...
 # ------------------------------------------------------------------------------
+
+API_VERSION = env("API_VERSION", default="v1")
+
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.pubsub.RedisPubSubChannelLayer",
+        "CONFIG": {
+            "hosts": env.list(
+                "CHANNEL_LAYERS_HOST",
+                default=[env("REDIS_URL", default="redis://localhost:6378")],
+            ),
+            "capacity": 200,
+        },
+    },
+}
+
+DJOSER = {
+    "SERIALIZERS": {
+        "user_create": "core.applications.users.api.serializers.CustomUserCreateSerializer",
+        "user": "core.applications.users.api.serializers.CustomUserSerializer",
+        "current_user": "core.applications.users.api.serializers.GetUser",
+        "password_reset_confirm": "core.applications.users.api.serializers.PasswordResetConfirmSerializer",
+        "password_reset_confirm_retype": "core.applications.users.api.serializers.PasswordResetConfirmRetypeSerializer",
+        "username_reset": "djoser.serializers.SendEmailResetSerializer",
+        "username_reset_confirm": "core.applications.users.api.serializers.UsernameResetConfirmSerializer",
+        "username_reset_confirm_retype": "core.applications.users.api.serializers.UsernameResetConfirmRetypeSerializer",
+        "activation": "core.applications.users.api.serializers.ActivationSerializer",
+    },
+    "PASSWORD_RESET_CONFIRM_URL": "password/reset/confirm/{uid}/{token}",
+    "ACTIVATION_URL": "activate/{uid}/{token}",
+    "SEND_ACTIVATION_EMAIL": True,
+    "SEND_CONFIRMATION_EMAIL": True,
+    "PASSWORD_CHANGED_EMAIL_CONFIRMATION": True,
+    "USERNAME_CHANGED_EMAIL_CONFIRMATION": True,
+    # "USER_CREATE_PASSWORD_RETYPE": True,
+    "SET_PASSWORD_RETYPE": True,
+    "PASSWORD_RESET_CONFIRM_RETYPE": True,
+    "EMAIL": {
+        "activation": "core.applications.users.email.ActivationEmail",
+        "confirmation": "core.applications.users.email.ConfirmationEmail",
+        "password_reset": "core.applications.users.email.PasswordResetEmail",
+        "password_changed_confirmation": "core.applications.users.email.PasswordChangedConfirmationEmail",
+        "username_changed_confirmation": "core.applications.users.email.UsernameChangedConfirmationEmail",
+        "username_reset": "core.applications.users.email.UsernameResetEmail",
+    },
+}
+
+# JSON Web Token authentication
+SIMPLE_JWT = {
+    "AUTH_HEADER_TYPES": ("Bearer",),
+    "ACCESS_TOKEN_LIFETIME": timedelta(days=30),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=160),
+    "TOKEN_OBTAIN_SERIALIZER": "core.applications.users.api.serializers.CustomTokenObtainPairSerializer",
+}
