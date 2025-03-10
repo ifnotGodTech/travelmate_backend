@@ -79,9 +79,11 @@ THIRD_PARTY_APPS = [
     "allauth.account",
     "allauth.mfa",
     "allauth.socialaccount",
+    "allauth.socialaccount.providers.facebook",
     "django_celery_beat",
     "rest_framework",
     "rest_framework.authtoken",
+    # "dj_rest_auth",
     "corsheaders",
     "drf_spectacular",
 ]
@@ -339,6 +341,7 @@ REST_FRAMEWORK = {
     ),
     "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "EXCEPTION_HANDLER": "core.helpers.custom_exceptions.custom_exception_handler",
 }
 
 # django-cors-headers - https://github.com/adamchainz/django-cors-headers#setup
@@ -350,7 +353,7 @@ SPECTACULAR_SETTINGS = {
     "TITLE": "travelmate-backend API",
     "DESCRIPTION": "Documentation of API endpoints of travelmate-backend",
     "VERSION": "1.0.0",
-    "SERVE_PERMISSIONS": ["rest_framework.permissions.IsAdminUser"],
+    "SERVE_PERMISSIONS": ["rest_framework.permissions.AllowAny"],
     "SCHEMA_PATH_PREFIX": "/api/",
 }
 # Your stuff...

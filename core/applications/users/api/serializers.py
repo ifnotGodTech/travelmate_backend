@@ -15,7 +15,7 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.settings import api_settings
 
-from core.applications.users.models import User
+from core.applications.users.models import Profile, User
 from core.applications.users.token import default_token_generator
 from core.helpers.custom_exceptions import CustomError
 from core.helpers.interface import BaseModelNoDefs
@@ -306,3 +306,13 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                 user=self.user,
             )
         return data
+
+
+class ProfileSerializers:
+    class BaseProfileSerializer(serializers.ModelSerializer):
+        class Meta:
+            model = Profile
+            fields = (
+               "id", "first_name", "last_name", "gender",
+                "date_of_birth", "address", "mobile_number"
+            )

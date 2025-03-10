@@ -5,7 +5,9 @@ from django.contrib.auth import user_logged_in
 from django.contrib.auth import user_logged_out
 from django.core.cache import cache
 from django.dispatch import receiver
+from django.db.models.signals import post_save
 
+from core.applications.users.models import Profile, User
 from core.helpers.utils import get_bearer_token
 
 channel_layer = get_channel_layer()
@@ -25,3 +27,10 @@ def on_user_logged_out(sender, request, user, **kwargs):
     cache.delete(get_bearer_token(request))
     channel_config = {"type": "on_user_logged_out", "code": 200}
     async_to_sync(channel_layer.group_send)(str(request.user.id), channel_config)
+
+
+# Signal to create Profile when User is created
+@receiver(post_save, sender=User)
+def create_user_profile(sender, instance, created, **kwargs):
+    if created:
+        Profile.objects.create(user=instance)

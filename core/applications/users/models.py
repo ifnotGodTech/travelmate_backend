@@ -6,7 +6,11 @@ from django.db.models import EmailField
 from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
 
+from core.helpers.enums import GenderChoice
+
 from .managers import UserManager
+from django.db import models
+import auto_prefetch
 
 
 class User(AbstractUser):
@@ -36,3 +40,22 @@ class User(AbstractUser):
 
         """
         return reverse("users:detail", kwargs={"pk": self.id})
+
+
+class Profile(models.Model):
+    """
+    Profile model for travelmate-backend.
+    """
+
+    user: "User" = auto_prefetch.OneToOneField(
+        "users.User", on_delete=models.CASCADE, related_name="profile"
+    )
+    first_name  = models.CharField(_("First Name"), max_length=50, blank=True, null=True)
+    last_name = models.CharField(_("Last Name"), max_length=50, blank=True, null=True)
+    gender = models.CharField(
+        _("Gender"), max_length=10, choices=GenderChoice.choices,
+        blank=True, null=True
+    )
+    date_of_birth = models.DateField(_("Date of Birth"), blank=True, null=True)
+    address = models.TextField(_("Address"), blank=True, null=True)
+    mobile_number = models.CharField(_("Mobile Number"), max_length=15, blank=True, null=True)

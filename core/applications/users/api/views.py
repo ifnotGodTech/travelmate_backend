@@ -28,10 +28,12 @@ from rest_framework_simplejwt.exceptions import InvalidToken
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.settings import api_settings
 
-from core.applications.users.models import User
+from core.applications.users.models import Profile, User
 from core.applications.users.token import default_token_generator
 from core.helpers.custom_exceptions import CustomError
-from core.applications.users.api.serializers import UserSerializer
+from core.applications.users.api.serializers import ProfileSerializers, UserSerializer
+from core.helpers.authentication import CustomJWTAuthentication
+from rest_framework.permissions import IsAuthenticated
 
 
 class AuthView(ModelViewSet):
@@ -551,3 +553,78 @@ class UserViewSet(ModelViewSet):
         serializer.is_valid(raise_exception=True)
         serializer.update(request.user, serializer.validated_data)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class ProfileViewSet(ModelViewSet):
+    query_set = Profile.objects.all()
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    lookup_field = "id"
+    profile_serializer_class = ProfileSerializers
+    serializer_class = profile_serializer_class.BaseProfileSerializer
+
+    def get_serializer_class(self):
+        """
+        Return the appropriate serializer class depending on the action.
+        """
+        if self.action in ["update", "partial_update"]:
+            return ProfileSerializers.BaseProfileSerializer
+        return ProfileSerializers.BaseProfileSerializer
+
+    def get_serializer(self, *args, **kwargs):
+        if self.action in ["update", "retrieve", "partial_update"]:
+            return ProfileSerializers.BaseProfileSerializer(*args, **kwargs)
+        return ProfileSerializers.BaseProfileSerializer(*args, **kwargs)
+
+    def get_queryset(self):
+        """Ensure users can only access their own profile"""
+        return Profile.objects.filter(user=self.request.user)
+
+    def retrieve(self, request, *args, **kwargs):
+        """
+        Retrieve the instance of a particular profile
+        :param request: The request object.
+        :param args: Additional positional arguments.
+        :param kwargs: Additional keyword arguments.
+        :return: The retrieved profile or an error message if the profile does not exist.
+        """
+
+        instance = self.get_object()
+        response_serializer = self.serializer_class(instance)
+        return Response(response_serializer.data, status=status.HTTP_200_OK)
+
+    def update(self, request, *args, **kwargs):
+        """
+        Update an existing profile for the current user.
+
+        :param request: The request object containing updated profile data.
+        :return: A response with the updated profile data.
+        """
+        partial = kwargs.pop("partial", False)
+        instance = self.get_object()
+        serializer = self.profile_serializer_class.BaseProfileSerializer(
+            instance,
+            data=request.data,
+            partial=partial,
+        )
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+        return Response(serializer.data, status=status.HTTP_202_ACCEPTED)
+
+    def partial_update(self, request, *args, **kwargs):
+        """
+        Update an existing profile for the current user.
+
+        :param request: The request object containing updated profile data.
+        :return: A response with the updated profile data.
+        """
+        partial = kwargs.pop("partial", True)
+        instance = self.get_object()
+        serializer = self.profile_serializer_class.BaseProfileSerializer(
+            instance,
+            data=request.data,
+            partial=partial,
+        )
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+        return Response(serializer.data, status=status.HTTP_202_ACCEPTED)

@@ -35,6 +35,7 @@ paho-mqtt==2.1.0 # http://eclipse.org/paho
  Authentication
 djoser==2.2.3 # https://github.com/sunscrapers/djoser
 social-auth-app-django==5.4.2 # https://github.com/python-social-auth/social-app-django
+dj-rest-auth==7.0.1
 # Channels
 channels[daphne]==4.1.0
 channels-redis==4.2.0
