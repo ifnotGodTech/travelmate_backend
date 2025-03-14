@@ -1,0 +1,39 @@
+<!-- core/applications/users/templates/email/otp_registration.html -->
+
+{% load i18n %}
+
+{% block subject %}
+  {% blocktrans %}OTP for Registration on {{ site_name }}{% endblocktrans %}
+{% endblock subject %}
+
+{% block text_body %}
+  {% blocktrans %}You're receiving this email because you requested an OTP to complete your registration on {{ site_name }}.{% endblocktrans %}
+
+  <p>{% trans "Your One-Time Password (OTP) is:" %}</p>
+  <p><strong>{{ otp }}</strong></p>
+
+  <p>{% trans "This OTP is valid for 5 minutes. Please do not share it with anyone." %}</p>
+
+  <p>{% trans "If you did not request this OTP, please ignore this email." %}</p>
+
+  <p>{% trans "Thanks for using TravelMate!" %}</p>
+
+  <p>{% blocktrans %}The {{ site_name }} team{% endblocktrans %}</p>
+{% endblock text_body %}
+
+{% block html_body %}
+  <p>
+    {% blocktrans %}You're receiving this email because you requested an OTP to complete your registration on {{ site_name }}.{% endblocktrans %}
+  </p>
+
+  <p>{% trans "Your One-Time Password (OTP) is:" %}</p>
+  <p><strong>{{ otp }}</strong></p>
+
+  <p>{% trans "This OTP is valid for 5 minutes. Please do not share it with anyone." %}</p>
+
+  <p>{% trans "If you did not request this OTP, please ignore this email." %}</p>
+
+  <p>{% trans "Thanks for using TravelMate!" %}</p>
+
+  <p>{% blocktrans %}The {{ site_name }} team{% endblocktrans %}</p>
+{% endblock html_body %}

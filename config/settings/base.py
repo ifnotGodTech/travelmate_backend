@@ -412,3 +412,13 @@ SIMPLE_JWT = {
     "REFRESH_TOKEN_LIFETIME": timedelta(days=160),
     "TOKEN_OBTAIN_SERIALIZER": "core.applications.users.api.serializers.CustomTokenObtainPairSerializer",
 }
+
+
+SITE_NAME = "TravelMate"
+
+# Amadeus API setups
+AMADUS_API_TEST_KEY = env("AMADUS_API_TEST_KEY")
+AMADUS_API_TEST_SECRET = env("AMADUS_API_TEST_SECRET")
+AMADUS_API_LIVE_KEY = env("AMADUS_API_LIVE_KEY")
+AMADUS_API_LIVE_SECRET = env("AMADUS_API_LIVE_SECRET")
+AMADUS_API_TESTING = env.bool("AMADUS_API_TESTING", True)

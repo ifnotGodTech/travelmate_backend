@@ -1,6 +1,6 @@
 import contextlib
 from typing import Literal
-
+from django.utils.module_loading import import_string
 from django.contrib.auth import authenticate
 from django.contrib.auth import user_logged_in
 from django.contrib.auth.models import update_last_login
@@ -14,12 +14,20 @@ from rest_framework.exceptions import AuthenticationFailed
 from rest_framework.exceptions import PermissionDenied
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.settings import api_settings
+from django.core.cache import cache
 
+from core.applications.users.managers import OTPManager
 from core.applications.users.models import Profile, User
 from core.applications.users.token import default_token_generator
 from core.helpers.custom_exceptions import CustomError
 from core.helpers.interface import BaseModelNoDefs
 from core.helpers.password_validator import validate_password_strength
+import logging
+from core.applications.users.email import ActivationEmail, ConfirmationEmail
+
+logger = logging.getLogger(__name__)
+from django.contrib.auth import get_user_model
+User = get_user_model()
 
 
 class CustomUserSerializer(serializers.ModelSerializer):
@@ -28,33 +36,42 @@ class CustomUserSerializer(serializers.ModelSerializer):
         fields = ["name", "email"]
 
 
-class CustomUserCreateSerializer(UserCreateSerializer):
+class CustomUserCreateSerializer(serializers.ModelSerializer):
     re_password = serializers.CharField(
         style={"input_type": "password"},
         required=True,
         write_only=True,
+        help_text="Required. Re-enter the password for confirmation.",
+    )
+    otp = serializers.CharField(
+        required=True,
+        write_only=True,
+        help_text="Required. OTP sent to the user's email.",
     )
 
-    def validate_password(self, password):
-        """Validate password strength using the custom validator"""
-        return validate_password_strength(password)
-
     def validate(self, attrs):
-        re_password = attrs.pop("re_password")
-        attrs = super().validate(attrs)
+        logger.info(f"Validated data: {attrs}")  # Log the validated data
+        email = attrs.get("email")
+        otp = attrs.get("otp").strip()  # Use get() instead of pop()
+        re_password = attrs.pop("re_password")  # Remove re_password since it's not needed after validation
         password = attrs.get("password")
 
+        # Verify OTP
+        cached_otp = cache.get(email)
+        if cached_otp != otp:
+            raise serializers.ValidationError({"otp": "Invalid or expired OTP."})
+
+        # Validate password match
         if password != re_password:
-            raise CustomError.BadRequest(
-                {"re_password": "The passwords entered do not match."},
-            )
+            raise serializers.ValidationError({"re_password": "The passwords entered do not match."})
 
         return attrs
-
-    class Meta(UserCreateSerializer.Meta):
-        fields = ("name", "email", "password", "re_password")
+    class Meta:
+        model = User
+        fields = ("email", "password", "re_password", "otp")
         extra_kwargs = {
             "re_password": {"write_only": True},
+            "otp": {"write_only": True},
         }
 
 
@@ -158,22 +175,25 @@ class EmailAndTokenSerializer(serializers.Serializer):
 
 
 class PasswordSerializer(serializers.Serializer):
-    new_password = serializers.CharField(style={"input_type": "password"})
+    new_password = serializers.CharField(style={"input_type": "password"}, write_only=True)
 
     def validate(self, attrs):
-        user = getattr(self, "user", None) or self.context["request"].user
-        # why assert? There are ValidationError / fail everywhere
-        assert user is not None
+        request = self.context.get("request")
+        user = getattr(self, "user", None) or (request.user if request else None)
+
+        if not user:
+            raise CustomError.BadRequest({"user": "User instance is required."})
 
         try:
             validate_password(attrs["new_password"], user)
         except django_exceptions.ValidationError as e:
-            raise CustomError.BadRequest({"new_password": e.messages[0]})  # noqa: B904
-        return super().validate(attrs)
+            raise CustomError.BadRequest({"new_password": e.messages[0]})
+
+        return attrs
 
 
 class PasswordRetypeSerializer(PasswordSerializer):
-    re_new_password = serializers.CharField(style={"input_type": "password"})
+    re_new_password = serializers.CharField(style={"input_type": "password"}, write_only=True)
 
     default_error_messages = {
         "password_mismatch": settings.CONSTANTS.messages.PASSWORD_MISMATCH_ERROR,
@@ -181,9 +201,11 @@ class PasswordRetypeSerializer(PasswordSerializer):
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
-        if attrs["new_password"] == attrs["re_new_password"]:
-            return attrs
-        return self.fail("password_mismatch")
+
+        if attrs["new_password"] != attrs["re_new_password"]:
+            raise CustomError.BadRequest({"re_new_password": self.error_messages["password_mismatch"]})
+
+        return attrs
 
 
 class UsernameSerializer(serializers.ModelSerializer):
@@ -306,6 +328,121 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                 user=self.user,
             )
         return data
+
+
+# class VerifyOTPSerializer(serializers.Serializer):
+#     """
+#     Serializer to handle OTP verification and password setup.
+#     """
+#     email = serializers.EmailField()
+#     otp = serializers.CharField(max_length=4, min_length=4)
+#     password = serializers.CharField(write_only=True, min_length=8)
+#     confirm_password = serializers.CharField(write_only=True, min_length=8)
+
+#     def validate(self, data):
+#         """
+#         Validate OTP and password match.
+#         """
+#         if not OTPManager.verify_otp(data["email"], data["otp"]):
+#             raise serializers.ValidationError({"otp": "Invalid OTP."})
+
+#         if data["password"] != data["confirm_password"]:
+#             raise serializers.ValidationError({"password": "Passwords do not match."})
+
+#         return data
+
+#     def create_user(self):
+#         """
+#         Creates a new user after OTP validation.
+#         """
+#         email = self.validated_data["email"]
+#         password = self.validated_data["password"]
+
+#         user = User.objects.create(
+#             email=email,
+#             password=make_password(password),
+#             is_active=True,  # Activate user after verification
+#         )
+#         return user
+
+
+# class RequestOTPSerializer(serializers.Serializer):
+#     """
+#     Serializer to handle OTP request.
+#     """
+#     email = serializers.EmailField()
+
+#     def validate_email(self, value):
+#         """
+#         Validate if the email exists in the system.
+#         """
+#         if User.objects.filter(email=value).exists():
+#             raise serializers.ValidationError("Email is already registered.")
+#         return value
+
+
+#     def send_otp(self):
+#         """
+#         Generates OTP, stores it in cache, and sends email.
+#         """
+#         email = self.validated_data["email"].strip().lower()
+#         otp = OTPManager.generate_otp(email)
+
+#         # Store OTP in cache for 5 minutes
+#         cache.set(f"otp_{email}", otp, timeout=300)
+
+#         # Send email
+#         context = {"otp": otp}
+
+#         try:
+#             if settings.SEND_ACTIVATION_EMAIL:
+#                 email_instance = ActivationEmail(context=context)
+#                 email_instance.send([email])  # ✅ Send without request.user
+#             elif settings.SEND_CONFIRMATION_EMAIL:
+#                 email_instance = ConfirmationEmail(context=context)
+#                 email_instance.send([email])  # ✅ Send without request.user
+#             print(f"OTP email sent! OTP: {otp}")  # Debugging: Print OTP
+#         except Exception as e:
+#             print(f"Email sending failed: {e}")
+
+
+class EmailSubmissionSerializer(serializers.Serializer):
+    email = serializers.EmailField(required=True)
+
+class VerifyOTPSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    otp = serializers.CharField()
+
+
+    def validate(self, data):
+        """Check if OTP is valid and correctly formatted."""
+        email = data["email"].strip().lower()
+        otp = str(data["otp"]).strip()  # Ensure OTP is always a string
+        print(otp, "zzzzzzzzzzzzzzzzzzz")
+
+        # 🔍 Debug: Print stored OTP (Only for testing, remove in production)
+        stored_otp = cache.get(f"otp_{email}")
+        print(f"Stored OTP for {email}: {stored_otp}")  # Check if OTP is saved
+
+        if not stored_otp:
+            raise serializers.ValidationError("OTP not found or expired.")
+
+        if stored_otp != otp:
+            raise serializers.ValidationError("Invalid OTP entered.")
+
+        return data
+
+    def save(self):
+        """Create a new user with the verified email."""
+        email = self.validated_data["email"]
+
+        # Create user (if not exists)
+        user, created = User.objects.get_or_create(email=email)
+
+        # ✅ Clear OTP from cache after successful verification
+        cache.delete(f"otp_{email}")
+
+        return {"message": "Email verified successfully. Proceed to set up your account."}
 
 
 class ProfileSerializers:

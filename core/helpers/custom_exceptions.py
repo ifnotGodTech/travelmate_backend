@@ -55,6 +55,11 @@ class CustomError:
         default_code = "internal_server_error"
         default_detail = "Internal server error."
 
+    class ServerError(APIException):
+        status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        default_code = "server_error"
+        default_detail = "Server error."
+
     @classmethod
     def raise_error(
         cls,
