@@ -7,6 +7,7 @@ from django.urls import include
 from django.urls import path
 from django.views import defaults as default_views
 from django.views.generic import TemplateView
+from core.applications.users.api.views import AppleLoginView, FacebookLoginView, GoogleLoginView
 from drf_spectacular.views import SpectacularAPIView
 from drf_spectacular.views import SpectacularSwaggerView
 from rest_framework.authtoken.views import obtain_auth_token
@@ -39,6 +40,7 @@ urlpatterns += [
     # DRF auth token
     path("api/auth/", include("core.applications.users.api.jwt")),
     path("api/", include("core.applications.users.api.routers", namespace="users")),
+    path("api/", include("core.applications.stay.api.stay_routers", namespace="stay")),
     path("api/auth-token/", obtain_auth_token),
     path("api/schema/", SpectacularAPIView.as_view(), name="api-schema"),
     path(
@@ -47,7 +49,12 @@ urlpatterns += [
         name="api-docs",
     ),
     # dj-rest-auth
-    # path('dj-rest-auth/', include('dj_rest_auth.urls'))
+    # path("dj-rest-auth/", include("dj_rest_auth.urls")),
+    # path("api/auth/registration/", include("dj_rest_auth.registration.urls")),  # User Registration
+    path("api/auth/social/", include("allauth.socialaccount.urls")),  # Social Auth Setup
+    path("api/auth/social/google/", GoogleLoginView.as_view(), name="google_login"),
+    path("api/auth/social/facebook/", FacebookLoginView.as_view(), name="facebook_login"),
+    path("api/auth/social/apple/", AppleLoginView.as_view(), name="apple_login"),
 ]
 
 if settings.DEBUG:

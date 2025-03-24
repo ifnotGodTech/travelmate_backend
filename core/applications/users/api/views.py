@@ -38,7 +38,12 @@ from core.helpers.custom_exceptions import CustomError
 from core.applications.users.api.serializers import CustomUserCreateSerializer, EmailSubmissionSerializer, PasswordRetypeSerializer, ProfileSerializers, UserSerializer, VerifyOTPSerializer
 from core.helpers.authentication import CustomJWTAuthentication
 from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework_simplejwt.tokens import RefreshToken
 import logging
+from dj_rest_auth.registration.views import SocialLoginView
+from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
+from allauth.socialaccount.providers.facebook.views import FacebookOAuth2Adapter
+from allauth.socialaccount.providers.apple.views import AppleOAuth2Adapter
 
 
 logger = logging.getLogger(__name__)
@@ -731,3 +736,71 @@ class ProfileViewSet(ModelViewSet):
         serializer.is_valid(raise_exception=True)
         self.perform_update(serializer)
         return Response(serializer.data, status=status.HTTP_202_ACCEPTED)
+
+
+
+class GoogleLoginView(SocialLoginView):
+    adapter_class = GoogleOAuth2Adapter
+    @extend_schema(
+        summary="Google OAuth Login",
+        description="Authenticate using a Google OAuth access token",
+        request={
+            "application/json": {
+                "type": "object",
+                "properties": {"access_token": {"type": "string"}}
+            }
+        },
+        responses={
+            200: {
+                "type": "object",
+                "properties": {"key": {"type": "string"}}
+            }
+        },
+    )
+    def post(self, request, *args, **kwargs):
+        return super().post(request, *args, **kwargs)
+
+class FacebookLoginView(SocialLoginView):
+    adapter_class = FacebookOAuth2Adapter
+
+    @extend_schema(
+        summary="Facebook OAuth Login",
+        description="Authenticate using a Facebook OAuth access token",
+        request={
+            "application/json": {
+                "type": "object",
+                "properties": {"access_token": {"type": "string"}}
+            }
+        },
+        responses={
+            200: {
+                "type": "object",
+                "properties": {"key": {"type": "string"}}
+            }
+        },
+    )
+    def post(self, request, *args, **kwargs):
+        return super().post(request, *args, **kwargs)
+
+
+class AppleLoginView(SocialLoginView):
+    adapter_class = AppleOAuth2Adapter
+
+    @extend_schema(
+        summary="Apple OAuth Login",
+        description="Authenticate using a Apple OAuth access token",
+        request={
+            "application/json": {
+                "type": "object",
+                "properties": {"access_token": {"type": "string"}}
+            }
+        },
+        responses={
+            200: {
+                "type": "object",
+                "properties": {"key": {"type": "string"}}
+            }
+        },
+    )
+    def post(self, request, *args, **kwargs):
+        return super().post(request, *args, **kwargs)

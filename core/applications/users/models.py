@@ -59,3 +59,7 @@ class Profile(models.Model):
     date_of_birth = models.DateField(_("Date of Birth"), blank=True, null=True)
     address = models.TextField(_("Address"), blank=True, null=True)
     mobile_number = models.CharField(_("Mobile Number"), max_length=15, blank=True, null=True)
+    profile_pics = models.ImageField(
+        _("Profile Picture"), upload_to="profile_pics/",
+        blank=True, null=True
+    )
