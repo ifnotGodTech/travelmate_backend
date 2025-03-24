@@ -1,3 +1,4 @@
+import logging
 from django.utils.translation import gettext_lazy as _
 from rest_framework import HTTP_HEADER_ENCODING
 from rest_framework.request import Request
@@ -6,6 +7,8 @@ from rest_framework_simplejwt.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.exceptions import InvalidToken
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.settings import api_settings
+
+logger = logging.getLogger(__name__)
 
 AUTH_HEADER_TYPES = api_settings.AUTH_HEADER_TYPES
 
@@ -17,17 +20,27 @@ AUTH_HEADER_TYPE_BYTES = {h.encode(HTTP_HEADER_ENCODING) for h in AUTH_HEADER_TY
 
 class CustomJWTAuthentication(JWTAuthentication):
     def authenticate(self, request: Request):
+        logger.debug("Attempting to authenticate with CustomJWTAuthentication")
         header = self.get_header(request)
         if header is None:
+            logger.debug("No Authorization header found")
             return None
 
         raw_token = self.get_raw_token(header)
         if raw_token is None:
+            logger.debug("No raw token found in header")
             return None
 
-        validated_token = self.get_validated_token(raw_token)
+        try:
+            validated_token = self.get_validated_token(raw_token)
+            logger.debug(f"Token validated successfully: {validated_token}")
+        except InvalidToken as e:
+            logger.error(f"Token validation failed: {e}")
+            raise
 
-        return self.get_user(validated_token, request), validated_token
+        user = self.get_user(validated_token, request)
+        logger.debug(f"User authenticated successfully: {user}")
+        return user, validated_token
 
     def get_validated_token(self, raw_token):
         """
@@ -49,9 +62,7 @@ class CustomJWTAuthentication(JWTAuthentication):
 
         raise InvalidToken(
             {
-                "detail": _(
-                    "Your session has expired. Please log in again to continue",
-                ),
+                "detail": _("Your session has expired. Please log in again to continue"),
                 "messages": messages,
             },
         )
@@ -62,29 +73,20 @@ class CustomJWTAuthentication(JWTAuthentication):
         """
         try:
             user_id = validated_token[api_settings.USER_ID_CLAIM]
+            logger.debug(f"Extracted user ID from token: {user_id}")
         except KeyError:
+            logger.error("Token contained no recognizable user identification")
             raise InvalidToken(_("Token contained no recognizable user identification"))
 
         try:
             user = self.user_model.objects.get(**{api_settings.USER_ID_FIELD: user_id})
+            logger.debug(f"User found: {user}")
         except self.user_model.DoesNotExist:
+            logger.error("User not found")
             raise AuthenticationFailed(_("User not found"), code="user_not_found")
 
         if not user.is_active:
+            logger.error("User is inactive")
             raise AuthenticationFailed(_("User is inactive"), code="user_inactive")
-        # Check for 'timezone' header
-        # if hasattr(request, "is_websocket") and request.is_websocket:
-        #     if isinstance(request.headers, dict):
-        #         timezone = request.headers.get("timezone", "Africa/Lagos")
-        #     else:
-        #         timezone = "Africa/Lagos"
-        #     serializer = AccountSerializer.TimezoneInfoHeader(
-        #         data={"timezone": timezone}, context={"request": request}
-        #     )
-        #     serializer.is_valid(raise_exception=True)
-        #     user.timezone = serializer.validated_data.get("timezone")
-        # else:
-        #     raise drf_exception.PermissionDenied(
-        #         "You need an account id to gain access"
-        #     )
+
         return user

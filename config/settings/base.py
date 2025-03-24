@@ -9,7 +9,7 @@ import environ
 
 BASE_DIR = Path(__file__).resolve(strict=True).parent.parent.parent
 # core/
-APPS_DIR = BASE_DIR / "travelmate_backend"
+APPS_DIR = BASE_DIR / "core"
 env = environ.Env()
 
 READ_DOT_ENV_FILE = env.bool("DJANGO_READ_DOT_ENV_FILE", default=False)
@@ -78,19 +78,22 @@ THIRD_PARTY_APPS = [
     "allauth",
     "allauth.account",
     "allauth.mfa",
-    "allauth.socialaccount",
-    "allauth.socialaccount.providers.facebook",
     "django_celery_beat",
     "rest_framework",
     "rest_framework.authtoken",
-    # "dj_rest_auth",
+    "dj_rest_auth",
+    "dj_rest_auth.registration",
+    "allauth.socialaccount",
+    "allauth.socialaccount.providers.google",
+    "allauth.socialaccount.providers.facebook",
+    "allauth.socialaccount.providers.apple",
     "corsheaders",
     "drf_spectacular",
 ]
 
 LOCAL_APPS = [
     "core.applications.users",
-    # Your stuff: custom apps go here
+    "core.applications.stay",
 ]
 # https://docs.djangoproject.com/en/dev/ref/settings/#installed-apps
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -331,13 +334,16 @@ SOCIALACCOUNT_ADAPTER = "core.applications.users.adapters.SocialAccountAdapter"
 # https://docs.allauth.org/en/latest/socialaccount/configuration.html
 SOCIALACCOUNT_FORMS = {"signup": "core.applications.users.forms.UserSocialSignupForm"}
 
+SOCIALACCOUNT_QUERY_EMAIL = True
+SOCIALACCOUNT_AUTO_SIGNUP = True
+
 # django-rest-framework
 # -------------------------------------------------------------------------------
 # django-rest-framework - https://www.django-rest-framework.org/api-guide/settings/
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
+        "core.helpers.authentication.CustomJWTAuthentication",
         "rest_framework.authentication.SessionAuthentication",
-        "rest_framework.authentication.TokenAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
@@ -416,9 +422,15 @@ SIMPLE_JWT = {
 
 SITE_NAME = "TravelMate"
 
-# Amadeus API setups
-AMADUS_API_TEST_KEY = env("AMADUS_API_TEST_KEY")
-AMADUS_API_TEST_SECRET = env("AMADUS_API_TEST_SECRET")
-AMADUS_API_LIVE_KEY = env("AMADUS_API_LIVE_KEY")
-AMADUS_API_LIVE_SECRET = env("AMADUS_API_LIVE_SECRET")
-AMADUS_API_TESTING = env.bool("AMADUS_API_TESTING", True)
+# Amadeus API key setups
+AMADEUS_API_TEST_KEY = env("AMADEUS_API_TEST_KEY")
+AMADEUS_API_TEST_SECRET = env("AMADEUS_API_TEST_SECRET")
+AMADEUS_API_LIVE_KEY = env("AMADEUS_API_LIVE_KEY")
+AMADEUS_API_LIVE_SECRET = env("AMADEUS_API_LIVE_SECRET")
+AMADEUS_API_TESTING = env.bool("AMADEUS_API_TESTING", True)
+
+
+# Stripe API key setups
+STRIPE_PUBLISHABLE_TEST_KEY = env("STRIPE_PUBLISHABLE_TEST_KEY")
+STRIPE_SECRET_TEST_KEY = env("STRIPE_SECRET_TEST_KEY")
+STRIPE_API_TESTING = env.bool("STRIPE_API_TESTING", True)
