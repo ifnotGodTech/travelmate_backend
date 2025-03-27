@@ -14,7 +14,10 @@ else:
     router = SimpleRouter()
 
 router.register("users", UserViewSet, basename="users")
-router.register("otp_register", OTPRegistrationViewSet, basename="otpregisterviews")
+router.register(
+    "registration_with_otp", OTPRegistrationViewSet,
+    basename="otpregisterviews"
+)
 
 router.register("profile", ProfileViewSet, basename="profile")
 

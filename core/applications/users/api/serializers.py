@@ -37,42 +37,53 @@ class CustomUserSerializer(serializers.ModelSerializer):
 
 
 class CustomUserCreateSerializer(serializers.ModelSerializer):
-    re_password = serializers.CharField(
-        style={"input_type": "password"},
-        required=True,
-        write_only=True,
-        help_text="Required. Re-enter the password for confirmation.",
-    )
     otp = serializers.CharField(
         required=True,
         write_only=True,
         help_text="Required. OTP sent to the user's email.",
     )
 
+    class Meta:
+        model = User
+        fields = ("email", "password", "otp")
+        extra_kwargs = {
+            "otp": {"write_only": True},
+        }
+
     def validate(self, attrs):
         logger.info(f"Validated data: {attrs}")  # Log the validated data
         email = attrs.get("email")
-        otp = attrs.get("otp").strip()  # Use get() instead of pop()
-        re_password = attrs.pop("re_password")  # Remove re_password since it's not needed after validation
+        otp = attrs.get("otp").strip()
         password = attrs.get("password")
+
+        if not email:
+            raise serializers.ValidationError({"email": "Email is required."})
 
         # Verify OTP
         cached_otp = cache.get(email)
         if cached_otp != otp:
             raise serializers.ValidationError({"otp": "Invalid or expired OTP."})
-
-        # Validate password match
-        if password != re_password:
-            raise serializers.ValidationError({"re_password": "The passwords entered do not match."})
-
         return attrs
+
+    def create(self, validated_data):
+        validated_data.pop("otp")  # OTP is validated, remove before saving
+        return User.objects.create_user(**validated_data)
+
+
+class AdminRegistrationSerializer(CustomUserCreateSerializer):
     class Meta:
         model = User
-        fields = ("email", "password", "re_password", "otp")
-        extra_kwargs = {
-            "re_password": {"write_only": True},
-            "otp": {"write_only": True},
-        }
+        fields = ("email", "password", "otp")
+
+    def create(self, validated_data):
+        validated_data.pop("otp")  # Remove OTP after validation
+
+        user = User.objects.create_superuser(**validated_data)
+        user.is_staff = True
+        user.is_admin = True  # Explicitly set this field
+        user.save()
+
+        return user
 
 
 class OSNameSchema(BaseModelNoDefs):

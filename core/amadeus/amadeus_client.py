@@ -1,5 +1,6 @@
 from amadeus import Client
 from django.conf import settings
+import inspect
 import logging
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,15 @@ class AmadeusClient:
 # Global instance to use throughout the application
 amadeus_client = AmadeusClient().get_client()
 
+# print(amadeus_client.shopping.hotel_offers_search.get.__doc__, "xxxxxxxxxxxxxxxxxxxxxxxxxxx")
+# print(amadeus_client.reference_data.locations.hotels.by_city.get.__doc__, "mmmmmmmmmmmmmmmmmmmmmmmmm")
+# print("cccccccccccccccccccccccccccccccccccccccc")
+# help(amadeus_client.reference_data.locations.hotels.by_city.get)
+# print(inspect.signature(amadeus_client.reference_data.locations.hotels.by_city.get),",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,")
+# print("ccccccccccccccccccccccccccccccccccccccccccccccc")
+# print(dir(amadeus_client.shopping.hotel_offers_search), "ooooooooooooooooooooooooo")
+# help(amadeus_client.shopping.hotel_offers_search.get)
+# help(amadeus_client.reference_data.locations.hotels.by_city.get)
 # print(dir(amadeus_client), "<<<<<<<<<<<<<<====================>>>>>>>>>>>>>>>>>")
 # print(dir(amadeus_client.shopping), "<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>")
 # print(dir(amadeus_client.shopping.hotel_offers_search), "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz")

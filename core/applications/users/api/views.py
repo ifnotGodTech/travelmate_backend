@@ -35,7 +35,7 @@ from rest_framework.viewsets import ViewSet
 from core.applications.users.models import Profile, User
 from core.applications.users.token import default_token_generator
 from core.helpers.custom_exceptions import CustomError
-from core.applications.users.api.serializers import CustomUserCreateSerializer, EmailSubmissionSerializer, PasswordRetypeSerializer, ProfileSerializers, UserSerializer, VerifyOTPSerializer
+from core.applications.users.api.serializers import AdminRegistrationSerializer, CustomUserCreateSerializer, EmailSubmissionSerializer, PasswordRetypeSerializer, ProfileSerializers, UserSerializer, VerifyOTPSerializer
 from core.helpers.authentication import CustomJWTAuthentication
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -44,7 +44,10 @@ from dj_rest_auth.registration.views import SocialLoginView
 from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
 from allauth.socialaccount.providers.facebook.views import FacebookOAuth2Adapter
 from allauth.socialaccount.providers.apple.views import AppleOAuth2Adapter
-
+from core.applications.users.api.schemas import(
+    submit_email_schema, verify_otp_schema, verify_admin_schema,
+    resend_otp_schema
+)
 
 logger = logging.getLogger(__name__)
 
@@ -159,100 +162,84 @@ class TokenBlacklistView(TokenViewBase):
 
 token_blacklist = TokenBlacklistView.as_view()
 
-
+@extend_schema(tags=["User Register with OTP"])
 class OTPRegistrationViewSet(ViewSet):
-    """
-    A ViewSet for handling user registration with OTP verification and automatic login.
-    """
+    """Handles OTP-based registration and verification."""
     permission_classes = [AllowAny]
     OTP_EXPIRY = 400  # 6 minutes
     OTP_DIGITS = 4
+    OTP_SECRET = "JBSWY3DPEHPK3PXP"
 
     def generate_otp(self, email):
-        """
-        Generates and caches a new OTP for the given email.
-        """
-        totp = pyotp.TOTP(pyotp.random_base32(), digits=self.OTP_DIGITS)
-        otp = totp.now()
+        """Generates and caches a 4-digit OTP."""
+        otp = pyotp.TOTP(self.OTP_SECRET, digits=self.OTP_DIGITS).now()
         cache.set(email, otp, timeout=self.OTP_EXPIRY)
-        logger.info(f"OTP generated and cached for {email}")
+        logger.info(f"OTP generated for {email}")
         return otp
 
     def send_otp_email(self, request, email, otp):
-        """Sends an OTP email to the user."""
-        context = {"otp": otp}
-        OTPRegistrationEmail(request, context).send([email])
+        """Sends OTP via email."""
+        OTPRegistrationEmail(request, {"otp": otp}).send([email])
         logger.info(f"OTP email sent to {email}")
 
     def generate_tokens(self, user):
-        """Generates JWT access and refresh tokens for automatic login."""
+        """Generates JWT tokens."""
         refresh = RefreshToken.for_user(user)
-        return {
-            "refresh": str(refresh),
-            "access": str(refresh.access_token),
-        }
+        return {"refresh": str(refresh), "access": str(refresh.access_token)}
 
+    def validate_otp(self, email, otp):
+        """Validates OTP from cache."""
+        cached_otp = cache.get(email)
+        if cached_otp == otp:
+            cache.delete(email)
+            return True
+        return False
+
+    @submit_email_schema
     @action(detail=False, methods=["post"])
     def submit_email(self, request):
-        """Endpoint to submit email and send OTP."""
+        """Submits email to receive an OTP."""
         serializer = EmailSubmissionSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        if serializer.is_valid():
+            email = serializer.validated_data["email"]
+            self.send_otp_email(request, email, self.generate_otp(email))
+            return Response({"message": "OTP sent to your email."}, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        email = serializer.validated_data["email"]
-        otp = self.generate_otp(email)
-        self.send_otp_email(request, email, otp)
+    def register_user(self, request, serializer_class):
+        """Registers a user or admin after OTP validation."""
+        serializer = serializer_class(data=request.data)
+        if serializer.is_valid():
+            email, otp = serializer.validated_data["email"], serializer.validated_data["otp"].strip()
+            if self.validate_otp(email, otp):
+                user = serializer.save()
+                logger.info(f"Account created for {email}")
+                return Response({"message": "User created successfully.", **self.generate_tokens(user)}, status=status.HTTP_201_CREATED)
+            return Response({"error": "Invalid or expired OTP."}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        return Response({"message": "OTP sent to your email."}, status=status.HTTP_200_OK)
-
+    @verify_otp_schema
     @action(detail=False, methods=["post"])
     def verify_otp_and_set_password(self, request):
-        """Endpoint to verify OTP, set password, and log in the user automatically."""
-        serializer = CustomUserCreateSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        """Verifies OTP, sets password, and logs in the user."""
+        return self.register_user(request, CustomUserCreateSerializer)
 
-        email = serializer.validated_data["email"]
-        otp = serializer.validated_data["otp"].strip()
-        password = serializer.validated_data["password"]
+    @verify_admin_schema
+    @action(detail=False, methods=["post"])
+    def verify_admin(self, request):
+        """Verifies OTP and registers an admin."""
+        return self.register_user(request, AdminRegistrationSerializer)
 
-        cached_otp = cache.get(email)
-        logger.info(f"OTP retrieved from cache for {email}: {cached_otp}")
-        logger.info(f"OTP provided by user: {otp}")
-
-        if cached_otp != otp:
-            return Response({"error": "Invalid OTP."}, status=status.HTTP_400_BAD_REQUEST)
-
-        cache.delete(email)
-        user = User.objects.create_user(email=email, password=password)
-        logger.info(f"User account created for {email}")
-
-        # Generate JWT tokens for automatic login
-        tokens = self.generate_tokens(user)
-
-        # Send confirmation email if enabled
-        if settings.SEND_CONFIRMATION_EMAIL:
-            context = {"user": user}
-            settings.EMAIL.confirmation(request, context).send([email])
-            logger.info(f"Confirmation email sent to {email}")
-
-        return Response(
-            {"message": "User created successfully.", **tokens},
-            status=status.HTTP_201_CREATED
-        )
-
+    @resend_otp_schema
     @action(detail=False, methods=["post"])
     def resend_otp(self, request):
-        """Endpoint to resend OTP."""
+        """Resends OTP to the user."""
         serializer = EmailSubmissionSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-        email = serializer.validated_data["email"]
-        otp = self.generate_otp(email)
-        self.send_otp_email(request, email, otp)
-
-        return Response({"message": "New OTP sent to your email."}, status=status.HTTP_200_OK)
+        if serializer.is_valid():
+            email = serializer.validated_data["email"]
+            self.send_otp_email(request, email, self.generate_otp(email))
+            return Response({"message": "New OTP sent to your email."}, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 @extend_schema(tags=["User"])
