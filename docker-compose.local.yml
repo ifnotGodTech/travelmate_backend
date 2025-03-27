@@ -48,6 +48,16 @@ services:
     volumes:
       - travelmate_backend_local_redis_data:/data
 
+  stripe-cli:
+    image: stripe/stripe-cli
+    container_name: travelmate_backend_local_stripe_cli
+    volumes:
+      - ~/.config/stripe:/root/.config/stripe
+    command: stripe login
+    stdin_open: true
+    tty: true
+    network_mode: "host"
+
 
   # celeryworker:
   #   <<: *django
