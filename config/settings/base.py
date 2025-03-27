@@ -94,6 +94,9 @@ THIRD_PARTY_APPS = [
 LOCAL_APPS = [
     "core.applications.users",
     "core.applications.stay",
+    "core.applications.flights",
+    "core.applications.cars",
+    # Your stuff: custom apps go here
 ]
 # https://docs.djangoproject.com/en/dev/ref/settings/#installed-apps
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -348,6 +351,7 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "EXCEPTION_HANDLER": "core.helpers.custom_exceptions.custom_exception_handler",
+
 }
 
 # django-cors-headers - https://github.com/adamchainz/django-cors-headers#setup
@@ -434,3 +438,4 @@ AMADEUS_API_TESTING = env.bool("AMADEUS_API_TESTING", True)
 STRIPE_PUBLISHABLE_TEST_KEY = env("STRIPE_PUBLISHABLE_TEST_KEY")
 STRIPE_SECRET_TEST_KEY = env("STRIPE_SECRET_TEST_KEY")
 STRIPE_API_TESTING = env.bool("STRIPE_API_TESTING", True)
+STRIPE_WEBHOOK_SECRET = env('STRIPE_WEBHOOK_SECRET', default='')

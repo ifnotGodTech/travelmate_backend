@@ -1,0 +1,154 @@
+from django.db import models
+from core.applications.users.models import User
+from django.utils import timezone
+import uuid
+from django.core.validators import MinValueValidator, MaxValueValidator
+from django.core.exceptions import ValidationError
+from decimal import Decimal
+
+class ServiceFeeSetting(models.Model):
+    """
+    Model to store and manage service fee settings
+    """
+    percentage = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        validators=[
+            MinValueValidator(0),
+            MaxValueValidator(100)
+        ]
+    )
+    is_active = models.BooleanField(default=True)
+    description = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Service Fee: {self.percentage}%"
+
+    @classmethod
+    def get_current_fee(cls):
+        """
+        Get the currently active service fee
+        """
+        try:
+            return cls.objects.filter(is_active=True).latest('created_at').percentage
+        except cls.DoesNotExist:
+            # Fallback to a default if no active fee is set
+            return Decimal('5.00')
+
+class Passenger(models.Model):
+    TITLE_CHOICES = [
+        ('MR', 'Mr'),
+        ('MS', 'Ms'),
+        ('MRS', 'Mrs'),
+        ('MISS', 'Miss'),
+        ('DR', 'Dr'),
+    ]
+
+    GENDER_CHOICES = [
+        ('M', 'Male'),
+        ('F', 'Female'),
+        ('O', 'Other'),
+    ]
+
+    title = models.CharField(max_length=4, choices=TITLE_CHOICES)
+    first_name = models.CharField(max_length=100)
+    last_name = models.CharField(max_length=100)
+    date_of_birth = models.DateField()
+    gender = models.CharField(max_length=1, choices=GENDER_CHOICES)
+    email = models.EmailField()
+    phone = models.CharField(max_length=20)
+    passport_number = models.CharField(max_length=50, blank=True, null=True)
+    passport_expiry = models.DateField(blank=True, null=True)
+    nationality = models.CharField(max_length=100, blank=True, null=True)
+    address_line1 = models.CharField(max_length=100, blank=True, null=True)
+    address_line2 = models.CharField(max_length=100, blank=True, null=True)
+    city = models.CharField(max_length=50, blank=True, null=True)
+    postal_code = models.CharField(max_length=20, blank=True, null=True)
+    country = models.CharField(max_length=2, blank=True, null=True)
+
+    def clean(self):
+        super().clean()
+        if self.phone:
+            # Remove all non-digit characters
+            self.phone = ''.join(filter(str.isdigit, self.phone))
+            # Ensure minimum length
+            if len(self.phone) < 6:
+                raise ValidationError("Phone number must be at least 6 digits")
+
+    def __str__(self):
+        return f"{self.first_name} {self.last_name}"
+
+class FlightBooking(models.Model):
+    BOOKING_STATUS_CHOICES = [
+        ('PENDING', 'Pending'),
+        ('CONFIRMED', 'Confirmed'),
+        ('CANCELLED', 'Cancelled'),
+    ]
+
+    BOOKING_TYPE_CHOICES = [
+        ('ONE_WAY', 'One Way'),
+        ('ROUND_TRIP', 'Round Trip'),
+        ('MULTI_CITY', 'Multi City'),
+    ]
+
+    booking_reference = models.CharField(max_length=10, unique=True, default=uuid.uuid4().hex[:10].upper())
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='bookings')
+    booking_status = models.CharField(max_length=10, choices=BOOKING_STATUS_CHOICES, default='PENDING')
+    booking_type = models.CharField(max_length=10, choices=BOOKING_TYPE_CHOICES)
+    total_price = models.DecimalField(max_digits=10, decimal_places=2)
+    currency = models.CharField(max_length=3, default='USD')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    service_fee = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    base_flight_cost = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.booking_reference} - {self.user.username}"
+
+class Flight(models.Model):
+    booking = models.ForeignKey(FlightBooking, on_delete=models.CASCADE, related_name='flights')
+    flight_number = models.CharField(max_length=10)
+    airline_code = models.CharField(max_length=3)
+    airline_name = models.CharField(max_length=100)
+    departure_airport = models.CharField(max_length=3)
+    departure_city = models.CharField(max_length=100)
+    departure_datetime = models.DateTimeField()
+    arrival_airport = models.CharField(max_length=3)
+    arrival_city = models.CharField(max_length=100)
+    arrival_datetime = models.DateTimeField()
+    cabin_class = models.CharField(max_length=50)
+    segment_id = models.CharField(max_length=100)  # From Amadeus API
+
+    def __str__(self):
+        return f"{self.flight_number}: {self.departure_airport} to {self.arrival_airport}"
+
+class PassengerBooking(models.Model):
+    booking = models.ForeignKey(FlightBooking, on_delete=models.CASCADE, related_name='passenger_bookings')
+    passenger = models.ForeignKey(Passenger, on_delete=models.CASCADE)
+    ticket_number = models.CharField(max_length=50, blank=True, null=True)
+    seat_number = models.CharField(max_length=10, blank=True, null=True)
+
+    def __str__(self):
+        return f"{self.passenger} - {self.booking.booking_reference}"
+
+class PaymentDetail(models.Model):
+    PAYMENT_STATUS_CHOICES = [
+        ('PENDING', 'Pending'),
+        ('COMPLETED', 'Completed'),
+        ('FAILED', 'Failed'),
+        ('REFUNDED', 'Refunded'),
+    ]
+
+    booking = models.OneToOneField(FlightBooking, on_delete=models.CASCADE, related_name='payment')
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    currency = models.CharField(max_length=3, default='USD')
+    payment_method = models.CharField(max_length=50)
+    transaction_id = models.CharField(max_length=100, blank=True, null=True)
+    payment_status = models.CharField(max_length=10, choices=PAYMENT_STATUS_CHOICES, default='PENDING')
+    payment_date = models.DateTimeField(blank=True, null=True)
+    additional_details = models.JSONField(null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.booking.booking_reference} - {self.payment_status}"
