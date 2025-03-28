@@ -3,8 +3,13 @@ from smtplib import SMTPRecipientsRefused
 from core.applications.users.email import OTPRegistrationEmail
 import pyotp
 from django.core.cache import cache
+from rest_framework import viewsets, permissions, status
+from rest_framework.filters import OrderingFilter
+from rest_framework.filters import SearchFilter
 
 from django.contrib.auth import logout
+import csv
+from django.http import HttpResponse
 from django.contrib.auth import update_session_auth_hash
 from django.contrib.auth import user_logged_out
 from django.utils.module_loading import import_string
@@ -36,7 +41,7 @@ from rest_framework.viewsets import ViewSet
 from core.applications.users.models import Profile, User
 from core.applications.users.token import default_token_generator
 from core.helpers.custom_exceptions import CustomError
-from core.applications.users.api.serializers import AdminRegistrationSerializer, CustomUserCreateSerializer, EmailSubmissionSerializer, PasswordRetypeSerializer, ProfileSerializers, UserSerializer, VerifyOTPSerializer
+from core.applications.users.api.serializers import AdminRegistrationSerializer, AdminUserSerializer, CustomUserCreateSerializer, EmailSubmissionSerializer, PasswordRetypeSerializer, ProfileSerializers, UserSerializer, VerifyOTPSerializer
 from core.helpers.authentication import CustomJWTAuthentication
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -45,6 +50,7 @@ from dj_rest_auth.registration.views import SocialLoginView
 from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
 from allauth.socialaccount.providers.facebook.views import FacebookOAuth2Adapter
 from allauth.socialaccount.providers.apple.views import AppleOAuth2Adapter
+from django_filters.rest_framework import DjangoFilterBackend
 from core.applications.users.api.schemas import(
     submit_email_schema, verify_otp_schema, verify_admin_schema,
     resend_otp_schema
@@ -792,3 +798,61 @@ class AppleLoginView(SocialLoginView):
     )
     def post(self, request, *args, **kwargs):
         return super().post(request, *args, **kwargs)
+
+
+class AdminUserViewSet(ModelViewSet):
+    queryset = User.objects.all()
+    serializer_class = AdminUserSerializer
+    permission_classes = [permissions.IsAdminUser]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ["is_active"]
+    search_fields = ["email"]
+    ordering_fields = ["date_joined"]
+
+    def get_queryset(self):
+        """
+        Returns all users by default.
+        If `booking_type` is provided in query params, filter users based on bookings.
+        """
+        queryset = super().get_queryset()
+        booking_type = self.request.query_params.get("booking_type")
+
+        if booking_type:
+            filters = {
+                "flights": "flight_bookings__isnull",
+                "hotels": "hotel_bookings__isnull",
+                "cars": "car_bookings__isnull",
+            }
+            filter_condition = filters.get(booking_type)
+            if filter_condition:
+                queryset = queryset.filter(**{filter_condition: False}).distinct()
+
+        return queryset
+
+
+    @action(detail=True, methods=["patch"], url_path="deactivate")
+    def deactivate_user(self, request, pk=None):
+        """
+        Deactivate a user by setting is_active to False.
+        """
+        user = self.get_object()
+        user.is_active = False
+        user.save()
+        return Response({"detail": "User has been deactivated"}, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=["get"], url_path="export")
+    def export_users(self, request):
+        """
+        Export users as a CSV file.
+        """
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = 'attachment; filename="users.csv"'
+
+        writer = csv.writer(response)
+        writer.writerow(["ID", "Email", "Username", "Is Active", "Date Joined"])
+
+        users = self.get_queryset()
+        for user in users:
+            writer.writerow([user.id, user.email, user.username, user.is_active, user.date_joined])
+
+        return response
