@@ -2,7 +2,7 @@ from django.conf import settings
 from rest_framework.routers import DefaultRouter
 from rest_framework.routers import SimpleRouter
 
-from core.applications.users.api.views import UserViewSet,  ProfileViewSet, OTPRegistrationViewSet
+from core.applications.users.api.views import AdminUserViewSet, UserViewSet,  ProfileViewSet, OTPRegistrationViewSet
 
 PREFIX = "users"
 
@@ -20,6 +20,7 @@ router.register(
 )
 
 router.register("profile", ProfileViewSet, basename="profile")
+router.register("admin", AdminUserViewSet, basename="admin")
 
 app_name = f"{PREFIX}"
 urlpatterns = router.urls

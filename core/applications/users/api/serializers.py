@@ -6,6 +6,8 @@ from django.contrib.auth import user_logged_in
 from django.contrib.auth.models import update_last_login
 from django.contrib.auth.password_validation import validate_password
 from django.core import exceptions as django_exceptions
+from core.applications.cars.models import Booking
+from core.applications.flights.models import FlightBooking
 from djoser.compat import get_user_email
 from djoser.conf import settings
 from djoser.serializers import UserCreateSerializer
@@ -464,3 +466,34 @@ class ProfileSerializers:
                "id", "first_name", "last_name", "gender",
                 "date_of_birth", "address", "mobile_number"
             )
+
+
+
+class AdminUserSerializer(serializers.ModelSerializer):
+    flight_bookings = serializers.SerializerMethodField()
+    # hotel_bookings = serializers.SerializerMethodField()
+    car_bookings = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = (
+            "id",
+            "email",
+            "name",
+            "is_active",
+            "is_staff",
+            "is_superuser",
+            "flight_bookings",
+            # "hotel_bookings",
+            "car_bookings",
+        )
+
+    def get_flight_bookings(self, obj):
+        return FlightBooking.objects.filter(user=obj).values(
+            "id",
+            "service_fee",
+        )
+    def get_car_bookings(self, obj):
+        return Booking.objects.filter(user=obj).values(
+            "id"
+        )
