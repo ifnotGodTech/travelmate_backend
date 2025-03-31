@@ -1,10 +1,12 @@
 from django.db import models
 from core.applications.users.models import User
+from core.applications.stay.models import Booking
 from django.utils import timezone
 import uuid
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.core.exceptions import ValidationError
 from decimal import Decimal
+import auto_prefetch
 
 class ServiceFeeSetting(models.Model):
     """
@@ -80,35 +82,51 @@ class Passenger(models.Model):
     def __str__(self):
         return f"{self.first_name} {self.last_name}"
 
-class FlightBooking(models.Model):
-    BOOKING_STATUS_CHOICES = [
-        ('PENDING', 'Pending'),
-        ('CONFIRMED', 'Confirmed'),
-        ('CANCELLED', 'Cancelled'),
-    ]
-
+class FlightBooking(auto_prefetch.Model):
+    """
+    Flight-specific booking details that extend the base Booking model
+    """
     BOOKING_TYPE_CHOICES = [
         ('ONE_WAY', 'One Way'),
         ('ROUND_TRIP', 'Round Trip'),
         ('MULTI_CITY', 'Multi City'),
     ]
 
-    booking_reference = models.CharField(max_length=10, unique=True, default=uuid.uuid4().hex[:10].upper())
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='bookings')
-    booking_status = models.CharField(max_length=10, choices=BOOKING_STATUS_CHOICES, default='PENDING')
+    booking = auto_prefetch.OneToOneField(
+        'stay.Booking',
+        on_delete=models.CASCADE,
+        related_name='flight_booking'
+    )
+
+    def generate_booking_reference():
+        """Generate a unique booking reference"""
+        return uuid.uuid4().hex[:10].upper()
+
+    booking_reference = models.CharField(
+        max_length=10,
+        unique=True,
+        default=generate_booking_reference
+    )
     booking_type = models.CharField(max_length=10, choices=BOOKING_TYPE_CHOICES)
-    total_price = models.DecimalField(max_digits=10, decimal_places=2)
     currency = models.CharField(max_length=3, default='USD')
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
     service_fee = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     base_flight_cost = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    admin_notes = models.TextField(blank=True, null=True)
+    cancelled_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='cancelled_flight_bookings'
+    )
+    cancellation_date = models.DateTimeField(null=True, blank=True)
+    cancellation_reason = models.CharField(max_length=255, blank=True, null=True)
 
     def __str__(self):
-        return f"{self.booking_reference} - {self.user.username}"
+        return f"{self.booking_reference} - {self.booking.user.username}"
 
-class Flight(models.Model):
-    booking = models.ForeignKey(FlightBooking, on_delete=models.CASCADE, related_name='flights')
+class Flight(auto_prefetch.Model):
+    flight_booking = auto_prefetch.ForeignKey(FlightBooking, on_delete=models.CASCADE, related_name='flights')
     flight_number = models.CharField(max_length=10)
     airline_code = models.CharField(max_length=3)
     airline_name = models.CharField(max_length=100)
@@ -124,16 +142,16 @@ class Flight(models.Model):
     def __str__(self):
         return f"{self.flight_number}: {self.departure_airport} to {self.arrival_airport}"
 
-class PassengerBooking(models.Model):
-    booking = models.ForeignKey(FlightBooking, on_delete=models.CASCADE, related_name='passenger_bookings')
-    passenger = models.ForeignKey(Passenger, on_delete=models.CASCADE)
+class PassengerBooking(auto_prefetch.Model):
+    flight_booking = auto_prefetch.ForeignKey(FlightBooking, on_delete=models.CASCADE, related_name='passenger_bookings')
+    passenger = auto_prefetch.ForeignKey(Passenger, on_delete=models.CASCADE)
     ticket_number = models.CharField(max_length=50, blank=True, null=True)
     seat_number = models.CharField(max_length=10, blank=True, null=True)
 
     def __str__(self):
-        return f"{self.passenger} - {self.booking.booking_reference}"
+        return f"{self.passenger} - {self.flight_booking.booking_reference}"
 
-class PaymentDetail(models.Model):
+class PaymentDetail(auto_prefetch.Model):
     PAYMENT_STATUS_CHOICES = [
         ('PENDING', 'Pending'),
         ('COMPLETED', 'Completed'),
@@ -141,7 +159,7 @@ class PaymentDetail(models.Model):
         ('REFUNDED', 'Refunded'),
     ]
 
-    booking = models.OneToOneField(FlightBooking, on_delete=models.CASCADE, related_name='payment')
+    booking = auto_prefetch.OneToOneField('stay.Booking', on_delete=models.CASCADE, related_name='flight_payment')
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     currency = models.CharField(max_length=3, default='USD')
     payment_method = models.CharField(max_length=50)
@@ -151,4 +169,4 @@ class PaymentDetail(models.Model):
     additional_details = models.JSONField(null=True, blank=True)
 
     def __str__(self):
-        return f"{self.booking.booking_reference} - {self.payment_status}"
+        return f"{self.booking.id} - {self.payment_status}"

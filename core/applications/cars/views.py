@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework.decorators import action
 from django.utils.crypto import get_random_string
 from datetime import datetime
+from rest_framework.permissions import IsAdminUser
 from django.utils import timezone
 from decimal import Decimal, ROUND_HALF_UP
 import stripe
@@ -12,9 +13,9 @@ from rest_framework.exceptions import APIException
 from django.db import transaction
 
 from .utils import AmadeusService
-from .models import Location, Car, Booking, Payment, CarCategory, CarCompany, StatusHistory, CarServiceFee
+from .models import CarBooking, Location, Car, Booking, Payment, CarCategory, CarCompany, StatusHistory, CarServiceFee
 from .serializers import (
-    LocationSerializer, CarSerializer, BookingSerializer,
+    CarBookingSerializer, LocationSerializer, CarSerializer,
     PaymentSerializer, CarCategorySerializer, CarCompanySerializer, CarServiceFeeSerializer
 )
 from django.core.cache import cache
@@ -68,22 +69,25 @@ class StripePaymentProcessor:
             'minimum_fee': float(self.minimum_fee)
         }
 
-    def create_payment_intent(self, booking, payment_method):
+    def create_payment_intent(self, booking=None, car_booking=None, payment_method=None):
         """
         Create Stripe Payment Intent for car booking
         """
         try:
+            # Use total_price from booking and currency from car_booking
             total_price = self.calculate_total_price(Decimal(str(booking.total_price)))
+            currency = car_booking.currency.lower()
+
             payment_split = self.split_payment(total_price)
 
             payment_intent = stripe.PaymentIntent.create(
                 amount=int(float(total_price) * 100),  # Convert to cents
-                currency=booking.currency.lower(),
+                currency=currency,
                 payment_method=payment_method,
                 confirm=True,
                 automatic_payment_methods={
                     "enabled": True,
-                    "allow_redirects": "never"  # ✅ Prevents redirect-based payments
+                    "allow_redirects": "never"  # Prevents redirect-based payments
                 },
                 metadata={
                     'booking_id': booking.id,
@@ -91,7 +95,7 @@ class StripePaymentProcessor:
                     'service_fee': float(payment_split['service_fee']),
                     'service_fee_percentage': float(payment_split['service_fee_percentage']),
                     'minimum_fee': float(payment_split['minimum_fee']),
-                    'vehicle_type': getattr(booking, 'vehicle_type', 'STANDARD')
+                    'vehicle_type': getattr(car_booking, 'vehicle_type', 'STANDARD')
                 }
             )
 
@@ -277,6 +281,7 @@ class TransferSearchViewSet(viewsets.ViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
 
+
 class TransferBookingError(APIException):
     status_code = 400
     default_detail = 'Transfer booking error occurred'
@@ -287,9 +292,15 @@ class TransferBookingError(APIException):
         if code:
             self.status_code = code
 
-class TransferBookingViewSet(viewsets.ModelViewSet):
-    queryset = Booking.objects.all()
-    serializer_class = BookingSerializer
+class CarBookingViewSet(viewsets.ModelViewSet):
+    queryset = CarBooking.objects.all()
+    serializer_class = CarBookingSerializer
+
+    def get_queryset(self):
+        """Filter bookings to only show the current user's bookings"""
+        if self.request.user.is_staff:
+            return CarBooking.objects.all()
+        return CarBooking.objects.filter(booking__user=self.request.user)
 
     @transaction.atomic
     def create(self, request, *args, **kwargs):
@@ -313,9 +324,6 @@ class TransferBookingViewSet(viewsets.ModelViewSet):
             price_info = transfer_details.get('price', {})
             start_location = transfer_details.get('start_location', {})
             end_location = transfer_details.get('end_location', {})
-
-            # Initialize booking_data early to prevent unbound variable issues
-            booking_data = {}
 
             # Find or create Location objects
             try:
@@ -344,7 +352,7 @@ class TransferBookingViewSet(viewsets.ModelViewSet):
                     code=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
 
-            # Add this before creating the booking
+            # Add car information
             try:
                 # Fetch the vehicle name and type
                 car_model = transfer_details.get('vehicle_name', 'Unknown')
@@ -368,56 +376,16 @@ class TransferBookingViewSet(viewsets.ModelViewSet):
                         'base_price_per_day': Decimal('0.00'),
                         'minimum_acceptable_price': Decimal('0.00'),
                         'transmission': 'automatic',
-                        'category': default_category,  # ✅ Ensure category_id is set
-                        'company': default_company,    # ✅ Ensure company_id is set
+                        'category': default_category,
+                        'company': default_company,
                     }
                 )
-
-                # ✅ Assign car_id to booking_data AFTER successful car creation
-                booking_data['car_id'] = car.id
-
             except Exception as e:
                 logger.error(f"Error creating car object: {str(e)}")
                 raise TransferBookingError(
                     detail='Could not create car object',
                     code=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
-
-            # ✅ Prepare booking_data after car_id is set
-            booking_data.update({
-                'user': request.user.id,
-                'transfer_id': transfer_id,
-                'pickup_location': pickup_location_obj.id,
-                'pickup_date': start_location.get('datetime')[:10],
-                'pickup_time': start_location.get('datetime')[11:16],
-                'dropoff_location': dropoff_location_obj.id,
-                'dropoff_date': end_location.get('datetime')[:10],
-                'dropoff_time': end_location.get('datetime')[11:16],
-                'passengers': request.data.get('passengers', 1),
-                'total_price': None,
-                'base_transfer_cost': None,
-                'service_fee': None,
-                'end_address': end_location.get('address'),
-                'end_city': end_location.get('city'),
-                'end_zipcode': end_location.get('zipcode'),
-                'end_country': end_location.get('country'),
-                'booking_reference': get_random_string(10).upper(),
-                'status': 'PENDING',
-                'currency': price_info.get('currency', 'EUR')
-            })
-
-            # Logging booking data before validation
-            logger.info(f"Booking data: {booking_data}")
-
-            # Validate required fields
-            required_fields = ['pickup_location', 'dropoff_location', 'pickup_date', 'pickup_time']
-            for field in required_fields:
-                if not booking_data.get(field):
-                    logger.error(f"Missing required field: {field}")
-                    raise TransferBookingError(
-                        detail=f'Missing required field: {field}',
-                        code=status.HTTP_400_BAD_REQUEST
-                    )
 
             # Extract price information
             base_price = Decimal(str(price_info.get('amount', 0))).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
@@ -429,16 +397,12 @@ class TransferBookingViewSet(viewsets.ModelViewSet):
                     code=status.HTTP_400_BAD_REQUEST
                 )
 
-            # Calculate total price with service fee
+            # Calculate service fee
             stripe_processor = StripePaymentProcessor(
                 vehicle_type=transfer_details.get('vehicle_type', 'STANDARD')
             )
-
-            # Calculate service fee separately
             percentage_fee = base_price * stripe_processor.service_rate_percentage
             service_fee = max(percentage_fee, stripe_processor.minimum_fee)
-
-            # Calculate total price
             total_price = base_price + service_fee
 
             # Ensure decimal places are rounded
@@ -446,21 +410,36 @@ class TransferBookingViewSet(viewsets.ModelViewSet):
             service_fee = service_fee.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
             total_price = total_price.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
-            # Update booking data with calculated prices
-            booking_data.update({
+            # Prepare booking data for our new serializer
+            booking_data = {
+                'user': request.user.id,  # Will be handled by serializer if not provided
+                'status': 'PENDING',
                 'total_price': total_price,
+                'car': car.id,
+                'transfer_id': transfer_id,
+                'pickup_location': pickup_location_obj.id,
+                'dropoff_location': dropoff_location_obj.id,
+                'pickup_date': start_location.get('datetime')[:10],
+                'pickup_time': start_location.get('datetime')[11:16],
+                'dropoff_date': end_location.get('datetime')[:10],
+                'dropoff_time': end_location.get('datetime')[11:16],
+                'passengers': request.data.get('passengers', 1),
+                'child_seats': request.data.get('child_seats', 0),
                 'base_transfer_cost': base_price,
                 'service_fee': service_fee,
-            })
+                'booking_reference': get_random_string(10).upper(),
+                'currency': price_info.get('currency', 'EUR')
+            }
 
-            # Validate and save booking
+            # Validate and save booking using our new serializer
             serializer = self.get_serializer(data=booking_data)
             serializer.is_valid(raise_exception=True)
-            booking = serializer.save()
+            car_booking = serializer.save()
 
             # Create initial status history record
+            # Note: We now need to access the base booking through car_booking.booking
             StatusHistory.objects.create(
-                booking=booking,
+                booking=car_booking.booking,
                 status='PENDING',
                 changed_at=timezone.now(),
                 notes='Booking created'
@@ -474,13 +453,12 @@ class TransferBookingViewSet(viewsets.ModelViewSet):
             logger.error(f"Error creating transfer booking: {str(e)}", exc_info=True)
             raise TransferBookingError(detail="An unexpected error occurred while creating booking")
 
-
-
     @action(detail=True, methods=['post'])
     @transaction.atomic
     def process_payment(self, request, pk=None):
         try:
-            booking = self.get_object()
+            car_booking = self.get_object()
+            booking = car_booking.booking  # Get the base booking
 
             # Validate booking status
             if booking.status != 'PENDING':
@@ -511,7 +489,7 @@ class TransferBookingViewSet(viewsets.ModelViewSet):
 
             # Create Amadeus booking
             try:
-                amadeus_booking_successful = self._create_amadeus_booking(booking)
+                amadeus_booking_successful = self._create_amadeus_booking(car_booking)
                 if not amadeus_booking_successful:
                     raise Exception("Failed to create Amadeus booking")
 
@@ -531,14 +509,16 @@ class TransferBookingViewSet(viewsets.ModelViewSet):
                 except Exception as refund_error:
                     logger.error(f"Refund failed: {str(refund_error)}")
 
-                booking.update_status('AMADEUS_FAILED')
+                booking.status = 'AMADEUS_FAILED'
+                booking.save()
+
                 raise TransferBookingError(
                     detail=str(amadeus_error),
                     code=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
 
             return Response({
-                'booking': BookingSerializer(booking).data,
+                'booking': CarBookingSerializer(car_booking).data,
                 'payment_details': payment_result
             }, status=status.HTTP_200_OK)
 
@@ -554,11 +534,13 @@ class TransferBookingViewSet(viewsets.ModelViewSet):
         """
         try:
             stripe_processor = StripePaymentProcessor()
+            car_booking = booking.car_booking  # Get the car_booking object
 
-            # Create payment intent
+            # Create payment intent - pass both objects or necessary data
             payment_result = stripe_processor.create_payment_intent(
-                booking,
-                payment_method
+                booking=booking,           # for total_price
+                car_booking=car_booking,   # for currency
+                payment_method=payment_method
             )
 
             # Check for errors
@@ -571,52 +553,48 @@ class TransferBookingViewSet(viewsets.ModelViewSet):
             # Create payment record with detailed split
             Payment.objects.create(
                 booking=booking,
-                amount=float(payment_split.get('total_price', booking.total_price)),  # ✅ Convert to float
-                currency=booking.currency,
+                amount=float(payment_split.get('total_price', booking.total_price)),
+                currency=car_booking.currency,  # Use car_booking.currency here
                 payment_method='STRIPE',
                 transaction_id=payment_result.get('payment_intent_id'),
                 status='COMPLETED',
                 transaction_date=timezone.now(),
                 additional_details={
-                    'transfer_cost': float(payment_split.get('transfer_cost', 0)),  # ✅ Convert to float
-                    'service_fee': float(payment_split.get('service_fee', 0)),  # ✅ Convert to float
+                    'transfer_cost': float(payment_split.get('transfer_cost', 0)),
+                    'service_fee': float(payment_split.get('service_fee', 0)),
                     'payment_intent_id': payment_result.get('payment_intent_id'),
-                    'service_fee_percentage': float(payment_split.get('service_fee_percentage', 0))  # ✅ Convert to float
+                    'service_fee_percentage': float(payment_split.get('service_fee_percentage', 0))
                 }
             )
-
 
             return True, payment_result
         except Exception as e:
             logger.error(f"Error processing payment: {str(e)}", exc_info=True)
             return False, str(e)
 
-    def _create_amadeus_booking(self, booking):
+
+    def _create_amadeus_booking(self, car_booking):
         """
         Create the actual booking with Amadeus API
+        Modified to work with CarBooking model
         """
         try:
             amadeus_service = AmadeusService()
-
-            # First, log all the details to understand what might be missing
-            logger.info(f"Booking details for Amadeus booking: {vars(booking)}")
+            booking = car_booking.booking  # Access the base Booking
 
             # Retrieve the original transfer details from cache
-            cache_key = f"transfer_details:{booking.transfer_id}"
+            cache_key = f"transfer_details:{car_booking.transfer_id}"
             transfer_details = cache.get(cache_key)
 
             if not transfer_details:
-                logger.error(f"No transfer details found for transfer_id: {booking.transfer_id}")
+                logger.error(f"No transfer details found for transfer_id: {car_booking.transfer_id}")
                 return False
-
-            # Log transfer details for debugging
-            logger.info(f"Transfer details: {transfer_details}")
 
             # Prepare payload for Amadeus API
             amadeus_payload = {
                 "data": {
                     "type": "transferBooking",
-                    "transferId": booking.transfer_id,  # Ensure this is the correct transfer ID
+                    "transferId": car_booking.transfer_id,
                     "customer": {
                         "firstName": booking.user.first_name or "Unknown",
                         "lastName": booking.user.last_name or "Unknown",
@@ -625,9 +603,9 @@ class TransferBookingViewSet(viewsets.ModelViewSet):
                         "countryCode": "US"  # Should be configurable
                     },
                     "pickup": {
-                        "locationId": transfer_details.get('start_location', {}).get('code', ''),  # Use transfer details' location code
-                        "date": booking.pickup_date.strftime('%Y-%m-%d'),
-                        "time": booking.pickup_time.strftime('%H:%M'),
+                        "locationId": transfer_details.get('start_location', {}).get('code', ''),
+                        "date": car_booking.pickup_date.strftime('%Y-%m-%d'),
+                        "time": car_booking.pickup_time.strftime('%H:%M'),
                         "address": {
                             "line1": transfer_details.get('start_location', {}).get('address', 'Unknown Address'),
                             "city": transfer_details.get('start_location', {}).get('city', 'Unknown City'),
@@ -635,20 +613,17 @@ class TransferBookingViewSet(viewsets.ModelViewSet):
                             "country": transfer_details.get('start_location', {}).get('country', 'Unknown'),
                         }
                     },
-                    "passengers": booking.passengers,
+                    "passengers": car_booking.passengers,
                     "vehicle": {
                         "type": transfer_details.get('vehicle_type', 'STANDARD')
                     },
                     "price": {
-                        "amount": float(booking.base_transfer_cost),
-                        "currency": booking.currency
+                        "amount": float(car_booking.base_transfer_cost),
+                        "currency": car_booking.currency
                     },
-                    "remarks": f"Booking created via API for booking {booking.booking_reference}"
+                    "remarks": f"Booking created via API for booking {car_booking.booking_reference}"
                 }
             }
-
-            # Validate payload before sending
-            logger.info(f"Amadeus booking payload: {amadeus_payload}")
 
             # Make API call to create booking
             response = amadeus_service.create_transfer_booking(amadeus_payload)
@@ -660,16 +635,21 @@ class TransferBookingViewSet(viewsets.ModelViewSet):
 
             # Process successful response
             response_data = response.json()
-            booking.amadeus_booking_reference = response_data.get('data', {}).get('id')
-            booking.update_status('CONFIRMED')
+            car_booking.amadeus_booking_reference = response_data.get('data', {}).get('id')
+
+            # Update the base booking status
+            booking.status = 'CONFIRMED'
             booking.save()
+
+            # Save the car booking with the amadeus reference
+            car_booking.save()
 
             # Add to status history
             StatusHistory.objects.create(
                 booking=booking,
                 status='CONFIRMED',
                 changed_at=timezone.now(),
-                notes=f"Amadeus booking reference: {booking.amadeus_booking_reference}"
+                notes=f"Amadeus booking reference: {car_booking.amadeus_booking_reference}"
             )
 
             return True
@@ -682,7 +662,8 @@ class TransferBookingViewSet(viewsets.ModelViewSet):
     @transaction.atomic
     def cancel_booking(self, request, pk=None):
         try:
-            booking = self.get_object()
+            car_booking = self.get_object()
+            booking = car_booking.booking  # Get the base booking
 
             if booking.status == 'CANCELLED':
                 raise TransferBookingError(
@@ -691,10 +672,10 @@ class TransferBookingViewSet(viewsets.ModelViewSet):
                 )
 
             # Call Amadeus API to cancel booking
-            if booking.amadeus_booking_reference:
+            if car_booking.amadeus_booking_reference:
                 amadeus_service = AmadeusService()
                 cancellation_successful = amadeus_service.cancel_transfer_booking(
-                    booking.amadeus_booking_reference
+                    car_booking.amadeus_booking_reference
                 )
 
                 if not cancellation_successful:
@@ -704,7 +685,8 @@ class TransferBookingViewSet(viewsets.ModelViewSet):
                     )
 
             # Update booking status
-            booking.update_status('CANCELLED')
+            booking.status = 'CANCELLED'
+            booking.save()
 
             # Add to status history
             StatusHistory.objects.create(
@@ -735,7 +717,7 @@ class TransferBookingViewSet(viewsets.ModelViewSet):
                     logger.error(f"Error processing refund: {str(e)}")
 
             return Response(
-                BookingSerializer(booking).data,
+                CarBookingSerializer(car_booking).data,
                 status=status.HTTP_200_OK
             )
 
@@ -747,8 +729,6 @@ class TransferBookingViewSet(viewsets.ModelViewSet):
                 detail="An unexpected error occurred while cancelling booking",
                 code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
-
 
 
 class PaymentViewSet(viewsets.ModelViewSet):
@@ -889,3 +869,253 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 detail="An unexpected error occurred while processing refund",
                 code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+
+
+class CarAdminViewSet(viewsets.ViewSet):
+    """
+    Admin-only operations for car bookings
+    """
+    permission_classes = [IsAdminUser]
+
+    def retrieve(self, request, pk=None):
+        """
+        Get detailed car booking information including user, payment, and vehicle details
+        """
+        try:
+            car_booking = CarBooking.objects.get(pk=pk)
+            booking = car_booking.booking
+
+            # Get basic booking data
+            booking_data = CarBookingSerializer(car_booking).data
+
+            # Add user details
+            user = booking.user
+            user_data = {
+                'user': {
+                    'first_name': user.first_name,
+                    'last_name': user.last_name,
+                    'email': user.email,
+                    'phone_number': user.phone_number if hasattr(user, 'phone_number') else None,
+                }
+            }
+
+            # Add payment details
+            payments = Payment.objects.filter(booking=booking)
+            payment_data = {
+                'payments': PaymentSerializer(payments, many=True).data
+            }
+
+            # Add car details
+            car_data = {
+                'car': {
+                    'model': car_booking.car.model if car_booking.car else None,
+                    'passenger_capacity': car_booking.car.passenger_capacity if car_booking.car else None,
+                    'company': car_booking.car.company.name if car_booking.car and car_booking.car.company else None,
+                }
+            }
+
+            # Add status history
+            status_history = StatusHistory.objects.filter(booking=booking).order_by('-changed_at')
+            history_data = {
+                'status_history': [
+                    {
+                        'status': sh.status,
+                        'changed_at': sh.changed_at,
+                        'notes': sh.notes
+                    } for sh in status_history
+                ]
+            }
+
+            # Combine all data
+            response_data = {
+                **booking_data,
+                **user_data,
+                **payment_data,
+                **car_data,
+                **history_data
+            }
+
+            return Response(response_data, status=status.HTTP_200_OK)
+
+        except CarBooking.DoesNotExist:
+            return Response(
+                {"error": "Car booking not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+    @action(detail=True, methods=['patch'])
+    def update_booking(self, request, pk=None):
+        """
+        Update car booking information (admin only)
+        """
+        try:
+            car_booking = CarBooking.objects.get(pk=pk)
+
+            # Only allow updating certain fields
+            allowed_fields = [
+                'pickup_date', 'pickup_time',
+                'dropoff_date', 'dropoff_time',
+                'passengers', 'child_seats',
+                'special_requests'
+            ]
+            update_data = {k: v for k, v in request.data.items() if k in allowed_fields}
+
+            if not update_data:
+                return Response(
+                    {"error": "No valid fields provided for update"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Update the booking
+            for field, value in update_data.items():
+                setattr(car_booking, field, value)
+            car_booking.save()
+
+            # Add to status history
+            StatusHistory.objects.create(
+                booking=car_booking.booking,
+                status='UPDATED',
+                changed_at=timezone.now(),
+                notes=f"Booking updated by admin: {', '.join(update_data.keys())}"
+            )
+
+            return Response(
+                {"message": "Booking updated successfully"},
+                status=status.HTTP_200_OK
+            )
+
+        except CarBooking.DoesNotExist:
+            return Response(
+                {"error": "Booking not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+    @action(detail=True, methods=['post'])
+    def admin_cancel(self, request, pk=None):
+        """
+        Admin cancellation of a car booking with optional refund
+        """
+        try:
+            car_booking = CarBooking.objects.get(pk=pk)
+            booking = car_booking.booking
+
+            if booking.status == 'CANCELLED':
+                return Response(
+                    {"error": "Booking is already cancelled"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Check if refund should be processed
+            process_refund = request.data.get('process_refund', False)
+            refund_amount = request.data.get('refund_amount')  # Optional partial refund
+            cancellation_reason = request.data.get('reason', 'Admin cancellation')
+
+            # Call the existing cancellation logic
+            view = CarBookingViewSet()
+            view.request = request
+            view.format_kwarg = {}
+
+            response = view.cancel_booking(request, pk=pk)
+
+            if response.status_code == 200:
+                # Add admin-specific cancellation notes
+                car_booking.admin_notes = cancellation_reason
+                car_booking.cancellation_reason = cancellation_reason
+                car_booking.cancelled_by = request.user
+                car_booking.save()
+
+                # Process refund if requested
+                if process_refund:
+                    refund_result = self._process_refund(
+                        booking,
+                        refund_amount=refund_amount,
+                        reason=cancellation_reason
+                    )
+
+                    if 'error' in refund_result:
+                        return Response(
+                            {"message": "Booking cancelled but refund failed", "refund_error": refund_result['error']},
+                            status=status.HTTP_207_MULTI_STATUS
+                        )
+
+                    return Response(
+                        {"message": "Booking cancelled and refund processed", "refund_details": refund_result},
+                        status=status.HTTP_200_OK
+                    )
+
+                return Response(
+                    {"message": "Booking cancelled successfully (no refund processed)"},
+                    status=status.HTTP_200_OK
+                )
+            else:
+                return response
+
+        except CarBooking.DoesNotExist:
+            return Response(
+                {"error": "Booking not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+    def _process_refund(self, booking, refund_amount=None, reason=None):
+        """
+        Process refund through Stripe
+        """
+        try:
+            # Get the payment details
+            payment = Payment.objects.filter(
+                booking=booking,
+                status='COMPLETED'
+            ).first()
+
+            if not payment:
+                return {'error': 'No completed payment found for this booking'}
+
+            stripe.api_key = (
+                settings.STRIPE_SECRET_TEST_KEY
+                if settings.AMADEUS_API_TESTING
+                else settings.STRIPE_LIVE_SECRET_KEY
+            )
+
+            # Calculate refund amount (full or partial)
+            amount_to_refund = refund_amount or payment.amount * 100  # Convert to cents
+
+            # Create refund
+            refund = stripe.Refund.create(
+                payment_intent=payment.transaction_id,
+                amount=int(amount_to_refund),
+                reason='requested_by_customer' if not reason else 'other',
+                metadata={
+                    'admin_refund': 'true',
+                    'booking_id': booking.id,
+                    'reason': reason or 'Admin-initiated refund'
+                }
+            )
+
+            # Update payment record
+            payment.refund_amount = (refund_amount or payment.amount)
+            payment.refund_date = timezone.now()
+            payment.status = 'REFUNDED' if (not refund_amount or refund_amount == payment.amount) else 'PARTIALLY_REFUNDED'
+            payment.additional_details['refund_id'] = refund.id
+            payment.save()
+
+            # Add to status history
+            StatusHistory.objects.create(
+                booking=booking,
+                status='REFUNDED' if (not refund_amount or refund_amount == payment.amount) else 'PARTIALLY_REFUNDED',
+                changed_at=timezone.now(),
+                notes=f"Refund processed by admin: {reason or 'No reason provided'}"
+            )
+
+            return {
+                'refund_id': refund.id,
+                'amount_refunded': refund.amount / 100,
+                'currency': refund.currency,
+                'status': refund.status
+            }
+
+        except stripe.error.StripeError as e:
+            return {'error': str(e), 'type': type(e).__name__}
+        except Exception as e:
+            return {'error': str(e)}

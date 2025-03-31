@@ -1,7 +1,9 @@
 from django.db import models
+from core.applications.stay.models import Booking
 from core.applications.users.models import User
 from django.utils import timezone
 from decimal import Decimal
+import auto_prefetch
 
 class CarServiceFee(models.Model):
     """
@@ -72,7 +74,6 @@ class CarServiceFee(models.Model):
             }
 
 
-
 class Location(models.Model):
     code = models.CharField(max_length=10, unique=True, null=True, blank=True)
     name = models.CharField(max_length=255)
@@ -89,13 +90,16 @@ class Location(models.Model):
     class Meta:
         unique_together = ['code', 'city', 'country']
 
+
 class CarCompany(models.Model):
     name = models.CharField(max_length=255)
     logo = models.ImageField(upload_to='car_companies/', null=True, blank=True)
 
+
 class CarCategory(models.Model):
     name = models.CharField(max_length=100)  # SUV, Economy, Compact, etc.
     description = models.TextField(blank=True)
+
 
 class Car(models.Model):
     TRANSMISSION_CHOICES = [
@@ -112,24 +116,16 @@ class Car(models.Model):
     minimum_acceptable_price = models.DecimalField(max_digits=10, decimal_places=2)
     image = models.ImageField(upload_to='cars/', null=True, blank=True)
 
-class Booking(models.Model):
-    STATUS_CHOICES = [
-        ('PENDING', 'Pending'),
-        ('CONFIRMED', 'Confirmed'),
-        ('CANCELLED', 'Cancelled'),
-        ('AMADEUS_FAILED', 'Amadeus Booking Failed'),
-        ('REFUND_PENDING', 'Refund Pending'),
-        ('REFUNDED', 'Refunded'),
-    ]
 
-    status = models.CharField(
-        max_length=20,
-        choices=STATUS_CHOICES,
-        default='PENDING'
+class CarBooking(models.Model):
+    """
+    Model that extends the core Booking model to add car-specific details
+    """
+    booking = auto_prefetch.OneToOneField(
+        'stay.Booking',
+        on_delete=models.CASCADE,
+        related_name='car_booking'
     )
-
-
-    user = models.ForeignKey(User, on_delete=models.CASCADE)
     car = models.ForeignKey(Car, on_delete=models.SET_NULL, null=True)
     pickup_location = models.ForeignKey(Location, on_delete=models.CASCADE, related_name='pickup_bookings')
     dropoff_location = models.ForeignKey(Location, on_delete=models.CASCADE, related_name='dropoff_bookings')
@@ -140,35 +136,42 @@ class Booking(models.Model):
     child_seats = models.IntegerField(default=0)
     passengers = models.IntegerField(default=1)
     named_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
-    total_price = models.DecimalField(max_digits=10, decimal_places=2)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     booking_reference = models.CharField(max_length=50, unique=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
     amadeus_booking_reference = models.CharField(max_length=100, blank=True, null=True)
     base_transfer_cost = models.DecimalField(max_digits=10, decimal_places=2)
     service_fee = models.DecimalField(max_digits=10, decimal_places=2)
     currency = models.CharField(max_length=3, default='USD')
     transfer_id = models.CharField(max_length=50, null=True, blank=True)
+    admin_notes = models.TextField(blank=True, null=True)
+    cancelled_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='cancelled_car_bookings'
+    )
+    special_requests = models.TextField(blank=True, null=True)
+    cancellation_reason = models.TextField(blank=True, null=True)
 
-    def update_status(self, new_status):
-        self.status = new_status
-        self.save()
+
+    def __str__(self):
+        return f"Car Booking for {self.booking.user} - {self.car}"
 
 
 class StatusHistory(models.Model):
-    booking = models.ForeignKey(
-        Booking,
+    booking = auto_prefetch.ForeignKey(
+        'stay.Booking',
         on_delete=models.CASCADE,
         related_name='status_history'
     )
-    status = models.CharField(max_length=20, choices=Booking.STATUS_CHOICES)
+    status = models.CharField(max_length=20, choices=Booking.status.field.choices)
     changed_at = models.DateTimeField(default=timezone.now)
     notes = models.TextField(blank=True)
 
     class Meta:
         ordering = ['-changed_at']
         verbose_name_plural = 'Status Histories'
+
 
 class Payment(models.Model):
     STATUS_CHOICES = [
@@ -185,12 +188,19 @@ class Payment(models.Model):
         default='PENDING'
     )
 
-    booking = models.OneToOneField(Booking, on_delete=models.CASCADE)
+    booking = auto_prefetch.OneToOneField('stay.Booking', on_delete=models.CASCADE, related_name='car_payment')
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     payment_method = models.CharField(max_length=50)
     transaction_id = models.CharField(max_length=255, blank=True)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     created_at = models.DateTimeField(auto_now_add=True)
     currency = models.CharField(max_length=3, default='USD')
     transaction_date = models.DateTimeField(default=timezone.now)
     additional_details = models.JSONField(default=dict)
+    refund_amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+    refund_date = models.DateTimeField(null=True, blank=True)
+    refund_reason = models.TextField(blank=True, null=True)

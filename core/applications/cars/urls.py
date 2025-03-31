@@ -11,8 +11,9 @@ router.register(r'locations', LocationViewSet)
 router.register(r'categories', CarCategoryViewSet)
 router.register(r'companies', CarCompanyViewSet)
 router.register(r'transfers', TransferSearchViewSet, basename='transfers')
-router.register(r'bookings', TransferBookingViewSet)
+router.register(r'car-bookings', CarBookingViewSet)
 router.register(r'payments', PaymentViewSet)
+router.register(r'admin/car-bookings', CarAdminViewSet, basename='admin-car-bookings')
 
 urlpatterns = [
     path('', include(router.urls)),

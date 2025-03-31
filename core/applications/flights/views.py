@@ -1,6 +1,8 @@
 from django.conf import settings
 from rest_framework import viewsets, status
 from rest_framework.response import Response
+from rest_framework.permissions import IsAdminUser
+from rest_framework.decorators import permission_classes
 from rest_framework.decorators import action
 from django.core.cache import cache
 from django.db import transaction
@@ -11,6 +13,7 @@ from django.http import HttpResponse
 import uuid
 import requests
 from .models import FlightBooking, Flight, Passenger, PassengerBooking, PaymentDetail, ServiceFeeSetting
+from core.applications.stay.models import Booking  # Import the base Booking model
 from .serializers import (
     FlightBookingSerializer,
     FlightBookingInputSerializer,
@@ -31,7 +34,6 @@ class StripePaymentProcessor:
     def __init__(self):
         # Retrieve service fee from the model
         self.service_rate_percentage = ServiceFeeSetting.get_current_fee() / Decimal('100')
-
 
         # Set up Stripe with the appropriate key based on testing mode
         stripe.api_key = (
@@ -73,12 +75,12 @@ class StripePaymentProcessor:
             'service_fee_percentage': float(self.service_rate_percentage * 100)
         }
 
-    def create_payment_intent(self, booking, payment_method):
+    def create_payment_intent(self, flight_booking, payment_method):
         """
         Create a Stripe Payment Intent
 
         Args:
-            booking (FlightBooking): Booking instance
+            flight_booking (FlightBooking): Booking instance
             payment_method (str): Stripe payment method ID
 
         Returns:
@@ -86,13 +88,13 @@ class StripePaymentProcessor:
         """
         try:
             # Calculate total price with service rate
-            total_price = self.calculate_total_price(booking.total_price)
+            total_price = self.calculate_total_price(flight_booking.booking.total_price)
             payment_split = self.split_payment(total_price)
 
             # Create Payment Intent
             payment_intent = stripe.PaymentIntent.create(
                 amount=int(total_price * 100),  # Convert to cents
-                currency=booking.currency.lower(),
+                currency=flight_booking.currency.lower(),
                 payment_method=payment_method,
                 confirm=True,
                 automatic_payment_methods={
@@ -100,7 +102,8 @@ class StripePaymentProcessor:
                     "allow_redirects": "never"
                 },
                 metadata={
-                    'booking_id': booking.id,
+                    'flight_booking_id': flight_booking.id,
+                    'booking_id': flight_booking.booking.id if flight_booking.booking else None,
                     'flight_cost': float(payment_split['flight_cost']),
                     'service_fee': float(payment_split['service_fee']),
                     'service_fee_percentage': float(payment_split['service_fee_percentage'])
@@ -111,11 +114,11 @@ class StripePaymentProcessor:
                 'payment_intent_id': payment_intent.id,
                 'client_secret': payment_intent.client_secret,
                 'payment_split': {
-                'total_price': float(payment_split['total_price']),
-                'flight_cost': float(payment_split['flight_cost']),
-                'service_fee': float(payment_split['service_fee']),
-                'service_fee_percentage': float(payment_split['service_fee_percentage'])
-            }
+                    'total_price': float(payment_split['total_price']),
+                    'flight_cost': float(payment_split['flight_cost']),
+                    'service_fee': float(payment_split['service_fee']),
+                    'service_fee_percentage': float(payment_split['service_fee_percentage'])
+                }
             }
 
         except stripe.error.StripeError as e:
@@ -134,7 +137,7 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
         """
         Filter bookings to return only those belonging to the current user
         """
-        return FlightBooking.objects.filter(user=self.request.user)
+        return FlightBooking.objects.filter(booking__user=self.request.user)
 
     @action(detail=False, methods=['post'])
     @transaction.atomic
@@ -173,12 +176,18 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
         total_price_with_service = stripe_processor.calculate_total_price(base_price)
         service_fee = total_price_with_service - base_price
 
-        # Create the booking
-        booking = FlightBooking.objects.create(
-            booking_reference=uuid.uuid4().hex[:10].upper(),
+        # First create the base Booking
+        base_booking = Booking.objects.create(
             user=request.user,
-            booking_type=booking_type,
+            status='PENDING',
             total_price=total_price_with_service,
+        )
+
+        # Create the FlightBooking that refers to the base Booking
+        flight_booking = FlightBooking.objects.create(
+            booking=base_booking,
+            booking_reference=uuid.uuid4().hex[:10].upper(),
+            booking_type=booking_type,
             base_flight_cost=base_price,
             service_fee=service_fee,
             currency='USD',  # Default currency, should ideally come from flight offer
@@ -187,7 +196,7 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
         # Create flight records from the cached flight offers
         for flight_offer in flight_offers:
             Flight.objects.create(
-                booking=booking,
+                flight_booking=flight_booking,  # Updated field name
                 departure_airport=flight_offer['itineraries'][0]['segments'][0]['departure']['iataCode'],
                 arrival_airport=flight_offer['itineraries'][0]['segments'][-1]['arrival']['iataCode'],
                 departure_datetime=datetime.strptime(
@@ -235,13 +244,13 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
 
             # Create passenger booking link
             PassengerBooking.objects.create(
-                booking=booking,
+                flight_booking=flight_booking,  # Updated field name
                 passenger=passenger
             )
 
         # Return the booking data
         return Response(
-            FlightBookingSerializer(booking).data,
+            FlightBookingSerializer(flight_booking).data,
             status=status.HTTP_201_CREATED
         )
 
@@ -252,9 +261,9 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
         """
         Process payment for a booking
         """
-        booking = self.get_object()
+        flight_booking = self.get_object()
 
-        if booking.booking_status != 'PENDING':
+        if flight_booking.booking.status != 'PENDING':
             return Response(
                 {"error": "This booking is not in a pending state and cannot be paid for."},
                 status=status.HTTP_400_BAD_REQUEST
@@ -267,18 +276,18 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
 
         # Process payment with Stripe
         payment_successful, payment_result = self._process_payment_with_gateway(
-            booking,
+            flight_booking,
             serializer.validated_data
         )
 
         if payment_successful:
             # Create Amadeus booking
-            amadeus_booking_successful = self._create_amadeus_booking(booking)
+            amadeus_booking_successful = self._create_amadeus_booking(flight_booking)
 
             if amadeus_booking_successful:
                 return Response(
                     {
-                        'booking': FlightBookingSerializer(booking).data,
+                        'booking': FlightBookingSerializer(flight_booking).data,
                         'payment_details': payment_result
                     },
                     status=status.HTTP_200_OK
@@ -289,8 +298,8 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
                     payment_intent=payment_result['payment_intent_id']
                 )
 
-                booking.booking_status = 'PENDING'
-                booking.save()
+                flight_booking.booking.status = 'PENDING'
+                flight_booking.booking.save()
 
                 return Response(
                     {"error": "Failed to create booking with Amadeus"},
@@ -307,23 +316,23 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
         """
         Cancel a booking
         """
-        booking = self.get_object()
+        flight_booking = self.get_object()
 
-        if booking.booking_status == 'CANCELLED':
+        if flight_booking.booking.status == 'CANCELLED':
             return Response(
                 {"error": "This booking is already cancelled"},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
         # Here you would call Amadeus API to cancel the booking
-        amadeus_cancellation_successful = self._cancel_amadeus_booking(booking)
+        amadeus_cancellation_successful = self._cancel_amadeus_booking(flight_booking)
 
         if amadeus_cancellation_successful:
-            booking.booking_status = 'CANCELLED'
-            booking.save()
+            flight_booking.booking.status = 'CANCELLED'
+            flight_booking.booking.save()
 
             return Response(
-                FlightBookingSerializer(booking).data,
+                FlightBookingSerializer(flight_booking).data,
                 status=status.HTTP_200_OK
             )
         else:
@@ -351,7 +360,7 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
         return total * num_passengers
 
 
-    def _process_payment_with_gateway(self, booking, payment_data):
+    def _process_payment_with_gateway(self, flight_booking, payment_data):
         try:
             payment_method = payment_data.get('payment_method_id')
             if not payment_method:
@@ -359,7 +368,7 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
 
             stripe_processor = StripePaymentProcessor()
             payment_result = stripe_processor.create_payment_intent(
-                booking,
+                flight_booking,
                 payment_method
             )
 
@@ -370,10 +379,10 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
 
             # Check if payment exists first
             payment, created = PaymentDetail.objects.update_or_create(
-                booking=booking,
+                booking=flight_booking.booking,  # Reference the base booking model
                 defaults={
-                    'amount': float(payment_split.get('total_price', booking.total_price)),
-                    'currency': booking.currency,
+                    'amount': float(payment_split.get('total_price', flight_booking.booking.total_price)),
+                    'currency': flight_booking.currency,
                     'payment_method': 'STRIPE',
                     'transaction_id': payment_result.get('payment_intent_id'),
                     'payment_status': 'COMPLETED',
@@ -392,16 +401,16 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
             return False, str(e)
 
 
-    def _create_amadeus_booking(self, booking):
+    def _create_amadeus_booking(self, flight_booking):
         """
         Create the actual booking with Amadeus API with segment validation
         """
-        flights = Flight.objects.filter(booking=booking)
-        passenger_bookings = PassengerBooking.objects.filter(booking=booking).select_related('passenger')
+        flights = Flight.objects.filter(flight_booking=flight_booking)  # Updated field name
+        passenger_bookings = PassengerBooking.objects.filter(flight_booking=flight_booking).select_related('passenger')  # Updated field name
 
         # 1. First validate flight segments are still available
         try:
-            flight_offers = self._prepare_flight_offers(booking, flights)
+            flight_offers = self._prepare_flight_offers(flight_booking, flights)
 
             # Verify each segment in each flight offer
             for offer in flight_offers:
@@ -412,7 +421,7 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
                         if not all(segment.get(k) for k in ['departure', 'arrival', 'carrierCode', 'number']):
                             raise ValueError("Incomplete segment data")
 
-            # 2. Prepare travelers data (same as before)
+            # 2. Prepare travelers data
             travelers = []
             for i, pb in enumerate(passenger_bookings, 1):
                 traveler = {
@@ -454,7 +463,7 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
                     'remarks': {
                         'general': [{
                             'subType': 'GENERAL_MISCELLANEOUS',
-                            'text': f'Booking {booking.booking_reference}'
+                            'text': f'Booking {flight_booking.booking_reference}'
                         }]
                     },
                     'ticketingAgreement': {
@@ -463,8 +472,8 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
                     },
                     'contacts': [{
                         'addresseeName': {
-                            'firstName': booking.user.first_name or 'Customer',
-                            'lastName': booking.user.last_name or 'Name'
+                            'firstName': flight_booking.booking.user.first_name or 'Customer',
+                            'lastName': flight_booking.booking.user.last_name or 'Name'
                         },
                         'companyName': 'NA',
                         'purpose': 'STANDARD',
@@ -473,7 +482,7 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
                             'countryCallingCode': '1',
                             'number': ''.join(filter(str.isdigit, passenger_bookings.first().passenger.phone))[:15] if passenger_bookings.exists() else '1234567890'
                         }],
-                        'emailAddress': booking.user.email,
+                        'emailAddress': flight_booking.booking.user.email,
                         'address': {
                             'lines': ['123 Main Street'],
                             'postalCode': '10001',
@@ -494,9 +503,9 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
 
             if response.status_code == 201:
                 amadeus_data = response.json()
-                booking.booking_reference = amadeus_data.get('data', {}).get('id')
-                booking.save()
-                self._update_ticket_numbers(booking, amadeus_data)
+                flight_booking.booking_reference = amadeus_data.get('data', {}).get('id')
+                flight_booking.save()
+                self._update_ticket_numbers(flight_booking, amadeus_data)
                 return True
 
             # Enhanced error handling for segment errors
@@ -516,11 +525,10 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
             return False
 
 
-    def _prepare_flight_offers(self, booking, flights):
+    def _prepare_flight_offers(self, flight_booking, flights):
         """
         Prepare flight offers data for Amadeus API
         """
-        # This is a simplified version. In real implementation, you would need to
         # use the flight offers from Amadeus search API
         flight_offers = []
 
@@ -560,9 +568,9 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
             'source': 'GDS',
             'instantTicketingRequired': False,
             'nonHomogeneous': False,
-            'oneWay': booking.booking_type == 'ONE_WAY',
+            'oneWay': flight_booking.booking_type == 'ONE_WAY',
             'lastTicketingDate': (timezone.now() + timezone.timedelta(days=3)).strftime('%Y-%m-%d'),
-            'numberOfBookableSeats': PassengerBooking.objects.filter(booking=booking).count(),
+            'numberOfBookableSeats': PassengerBooking.objects.filter(flight_booking=flight_booking).count(),  # Updated field name
             'itineraries': [
                 {
                     'duration': 'PT2H',  # Placeholder
@@ -570,48 +578,48 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
                 }
             ],
             'price': {
-                'currency': booking.currency,
-                'total': str(booking.total_price),
-                'base': str(booking.total_price * Decimal('0.8')),  # Placeholder
+                'currency': flight_booking.currency,
+                'total': str(flight_booking.booking.total_price),
+                'base': str(flight_booking.booking.total_price * Decimal('0.8')),  # Placeholder
                 'fees': [
                     {
-                        'amount': str(booking.total_price * Decimal('0.1')),
+                        'amount': str(flight_booking.booking.total_price * Decimal('0.1')),
                         'type': 'SUPPLIER'
                     },
                     {
-                        'amount': str(booking.total_price * Decimal('0.1')),
+                        'amount': str(flight_booking.booking.total_price * Decimal('0.1')),
                         'type': 'TICKETING'
                     }
                 ],
-                'grandTotal': str(booking.total_price)
+                'grandTotal': str(flight_booking.booking.total_price)
             },
             'pricingOptions': {
                 'fareType': ['PUBLISHED'],
                 'includedCheckedBagsOnly': True
             },
             'validatingAirlineCodes': [flights[0].airline_code],
-            'travelerPricings': self._prepare_traveler_pricings(booking)
+            'travelerPricings': self._prepare_traveler_pricings(flight_booking)
         }
 
         flight_offers.append(offer)
         return flight_offers
 
-    def _prepare_traveler_pricings(self, booking):
+    def _prepare_traveler_pricings(self, flight_booking):
         """
         Prepare traveler pricing data for Amadeus API
         """
         traveler_pricings = []
-        passenger_bookings = PassengerBooking.objects.filter(booking=booking)
+        passenger_bookings = PassengerBooking.objects.filter(flight_booking=flight_booking)  # Updated field name
 
         for i, pb in enumerate(passenger_bookings, 1):
             pricing = {
                 'travelerId': str(i),
                 'fareOption': 'STANDARD',
-                'travelerType': 'ADULT',  # Simplified - would need age calculation
+                'travelerType': 'ADULT',  # Assuming all are adults for simplicity
                 'price': {
-                    'currency': booking.currency,
-                    'total': str(booking.total_price / passenger_bookings.count()),
-                    'base': str(booking.total_price * Decimal('0.8') / passenger_bookings.count())
+                    'currency': flight_booking.currency,
+                    'total': str(flight_booking.booking.total_price / passenger_bookings.count()),
+                    'base': str(flight_booking.booking.total_price * Decimal('0.8') / passenger_bookings.count())
                 },
                 'fareDetailsBySegment': [
                     {
@@ -622,7 +630,7 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
                         'includedCheckedBags': {
                             'quantity': 1
                         }
-                    } for flight in Flight.objects.filter(booking=booking)
+                    } for flight in Flight.objects.filter(flight_booking=flight_booking)  # Updated field name
                 ]
             }
             traveler_pricings.append(pricing)
@@ -679,7 +687,7 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
 
         return travelers
 
-    def _update_ticket_numbers(self, booking, amadeus_data):
+    def _update_ticket_numbers(self, flight_booking, amadeus_data):
         """
         Update ticket numbers from Amadeus response
         """
@@ -688,13 +696,13 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
         # parse the Amadeus response to extract ticket numbers
 
         # For demonstration, we'll generate random ticket numbers
-        passenger_bookings = PassengerBooking.objects.filter(booking=booking)
+        passenger_bookings = PassengerBooking.objects.filter(flight_booking=flight_booking)  # Updated field name
 
         for pb in passenger_bookings:
             pb.ticket_number = f"TICKET-{uuid.uuid4().hex[:10].upper()}"
             pb.save()
 
-    def _cancel_amadeus_booking(self, booking):
+    def _cancel_amadeus_booking(self, flight_booking):
         """
         Cancel a booking with Amadeus API
         """
@@ -704,7 +712,7 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
 
             # Make API call to cancel booking
             response = amadeus_client.delete(
-                f'/v1/booking/flight-orders/{booking.booking_reference}'
+                f'/v1/booking/flight-orders/{flight_booking.booking_reference}'
             )
 
             return response.status_code == 200
@@ -726,6 +734,7 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
         )
 
         return amadeus
+
 
 
 
@@ -986,6 +995,254 @@ class FlightSearchViewSet(viewsets.ViewSet):
                 {"error": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+
+
+class FlightAdminViewSet(viewsets.ViewSet):
+    """
+    Admin-only operations for flight bookings
+    """
+    permission_classes = [IsAdminUser]
+
+    def retrieve(self, request, pk=None):
+        """
+        Get detailed booking information including user and flight details
+        """
+        try:
+            flight_booking = FlightBooking.objects.get(pk=pk)
+
+            # Get all related data
+            booking_data = FlightBookingSerializer(flight_booking).data
+
+            # Add user details
+            user = flight_booking.booking.user
+            user_data = {
+                'user': {
+                    'first_name': user.first_name,
+                    'last_name': user.last_name,
+                    'email': user.email,
+                    'phone_number': user.phone_number if hasattr(user, 'phone_number') else None,
+                    'address': user.address if hasattr(user, 'address') else None,
+                }
+            }
+
+            # Add flight details
+            flights = Flight.objects.filter(flight_booking=flight_booking)
+            flight_data = {
+                'flights': [
+                    {
+                        'id': flight.id,
+                        'departure_airport': flight.departure_airport,
+                        'arrival_airport': flight.arrival_airport,
+                        'departure_datetime': flight.departure_datetime,
+                        'arrival_datetime': flight.arrival_datetime,
+                        'airline_code': flight.airline_code,
+                        'flight_number': flight.flight_number,
+                        'cabin_class': flight.cabin_class,
+                        'segment_id': flight.segment_id
+                    } for flight in flights
+                ]
+            }
+
+            # Add passenger details
+            passenger_bookings = PassengerBooking.objects.filter(flight_booking=flight_booking)
+            passenger_data = {
+                'passengers': [
+                    {
+                        'first_name': pb.passenger.first_name,
+                        'last_name': pb.passenger.last_name,
+                        'email': pb.passenger.email,
+                        'phone': pb.passenger.phone,
+                        'passport_number': pb.passenger.passport_number,
+                        'passport_expiry': pb.passenger.passport_expiry,
+                        'nationality': pb.passenger.nationality,
+                        'ticket_number': pb.ticket_number
+                    } for pb in passenger_bookings
+                ]
+            }
+
+            # Combine all data
+            response_data = {
+                **booking_data,
+                **user_data,
+                **flight_data,
+                **passenger_data
+            }
+
+            return Response(response_data, status=status.HTTP_200_OK)
+
+        except FlightBooking.DoesNotExist:
+            return Response(
+                {"error": "Booking not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+    @action(detail=True, methods=['patch'])
+    def update_flight(self, request, pk=None):
+        """
+        Update flight information (admin only)
+        """
+        try:
+            flight_booking = FlightBooking.objects.get(pk=pk)
+            flight_id = request.data.get('flight_id')
+
+            if not flight_id:
+                return Response(
+                    {"error": "flight_id is required in request data"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            try:
+                flight = Flight.objects.get(id=flight_id, flight_booking=flight_booking)
+            except Flight.DoesNotExist:
+                return Response(
+                    {"error": "Flight not found for this booking"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            # Only allow updating certain fields
+            allowed_fields = ['departure_datetime', 'arrival_datetime', 'flight_number']
+            update_data = {k: v for k, v in request.data.items() if k in allowed_fields}
+
+            if not update_data:
+                return Response(
+                    {"error": "No valid fields provided for update"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Update the flight
+            for field, value in update_data.items():
+                setattr(flight, field, value)
+            flight.save()
+
+            return Response(
+                {"message": "Flight updated successfully"},
+                status=status.HTTP_200_OK
+            )
+
+        except FlightBooking.DoesNotExist:
+            return Response(
+                {"error": "Booking not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+    @action(detail=True, methods=['post'])
+    def admin_cancel(self, request, pk=None):
+        """
+        Admin cancellation of a booking with optional refund
+        """
+        try:
+            flight_booking = FlightBooking.objects.get(pk=pk)
+
+            if flight_booking.booking.status == 'CANCELLED':
+                return Response(
+                    {"error": "Booking is already cancelled"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Check if refund should be processed
+            process_refund = request.data.get('process_refund', False)
+            refund_amount = request.data.get('refund_amount')  # Optional partial refund
+
+            # Call the existing cancellation logic
+            view = FlightBookingViewSet()
+            view.request = request
+            view.format_kwarg = {}
+
+            response = view.cancel_booking(request, pk=pk)
+
+            if response.status_code == 200:
+                # Add admin-specific cancellation notes
+                cancellation_reason = request.data.get('reason', 'Admin cancellation')
+                flight_booking.admin_notes = cancellation_reason
+                flight_booking.save()
+
+                # Process refund if requested
+                if process_refund:
+                    refund_result = self._process_refund(
+                        flight_booking,
+                        refund_amount=refund_amount,
+                        reason=cancellation_reason
+                    )
+
+                    if 'error' in refund_result:
+                        return Response(
+                            {"message": "Booking cancelled but refund failed", "refund_error": refund_result['error']},
+                            status=status.HTTP_207_MULTI_STATUS
+                        )
+
+                    return Response(
+                        {"message": "Booking cancelled and refund processed", "refund_details": refund_result},
+                        status=status.HTTP_200_OK
+                    )
+
+                return Response(
+                    {"message": "Booking cancelled successfully (no refund processed)"},
+                    status=status.HTTP_200_OK
+                )
+            else:
+                return response
+
+        except FlightBooking.DoesNotExist:
+            return Response(
+                {"error": "Booking not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+    def _process_refund(self, flight_booking, refund_amount=None, reason=None):
+        """
+        Process refund through Stripe
+        """
+        try:
+            # Get the payment details
+            payment = PaymentDetail.objects.filter(
+                booking=flight_booking.booking,
+                payment_status='COMPLETED'
+            ).first()
+
+            if not payment:
+                return {'error': 'No completed payment found for this booking'}
+
+            stripe.api_key = (
+                settings.STRIPE_SECRET_TEST_KEY
+                if settings.AMADEUS_API_TESTING
+                else settings.STRIPE_LIVE_SECRET_KEY
+            )
+
+            # Calculate refund amount (full or partial)
+            amount_to_refund = refund_amount or payment.amount * 100  # Convert to cents
+
+            # Create refund
+            refund = stripe.Refund.create(
+                payment_intent=payment.transaction_id,
+                amount=int(amount_to_refund),
+                reason='requested_by_customer' if not reason else 'other',
+                metadata={
+                    'admin_refund': 'true',
+                    'booking_id': flight_booking.booking.id,
+                    'reason': reason or 'Admin-initiated refund'
+                }
+            )
+
+            # Update payment record
+            payment.refund_amount = (refund_amount or payment.amount)
+            payment.refund_date = timezone.now()
+            payment.payment_status = 'REFUNDED' if refund_amount == payment.amount else 'PARTIALLY_REFUNDED'
+            payment.additional_details['refund_id'] = refund.id
+            payment.save()
+
+            return {
+                'refund_id': refund.id,
+                'amount_refunded': refund.amount / 100,
+                'currency': refund.currency,
+                'status': refund.status
+            }
+
+        except stripe.error.StripeError as e:
+            return {'error': str(e), 'type': type(e).__name__}
+        except Exception as e:
+            return {'error': str(e)}
 
 
 

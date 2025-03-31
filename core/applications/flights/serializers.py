@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .models import Passenger, FlightBooking, Flight, PassengerBooking, PaymentDetail
+from core.applications.stay.models import Booking
 from datetime import datetime
 from django.core.exceptions import ValidationError
 
@@ -20,14 +21,20 @@ class PassengerSerializer(serializers.ModelSerializer):
 class FlightSerializer(serializers.ModelSerializer):
     class Meta:
         model = Flight
-        exclude = ['booking']
+        exclude = ['flight_booking']  # Changed from 'booking' to 'flight_booking'
 
 class PassengerBookingSerializer(serializers.ModelSerializer):
     passenger = PassengerSerializer()
 
     class Meta:
         model = PassengerBooking
-        exclude = ['booking']
+        exclude = ['flight_booking']  # Changed from 'booking' to 'flight_booking'
+
+class BookingSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Booking
+        fields = ['id', 'user', 'status', 'total_price', 'created_at', 'updated_at']
+        read_only_fields = ['created_at', 'updated_at']
 
 class PaymentDetailSerializer(serializers.ModelSerializer):
     class Meta:
@@ -35,14 +42,14 @@ class PaymentDetailSerializer(serializers.ModelSerializer):
         exclude = ['booking']
 
 class FlightBookingSerializer(serializers.ModelSerializer):
+    booking = BookingSerializer(read_only=True)
     flights = FlightSerializer(many=True, read_only=True)
     passenger_bookings = PassengerBookingSerializer(many=True, read_only=True)
-    payment = PaymentDetailSerializer(read_only=True)
 
     class Meta:
         model = FlightBooking
         fields = '__all__'
-        read_only_fields = ['booking_reference', 'user', 'created_at', 'updated_at']
+        read_only_fields = ['booking_reference', 'created_at', 'updated_at']
 
 # Input serializers for creating flight bookings
 class PassengerInputSerializer(serializers.ModelSerializer):
@@ -53,7 +60,7 @@ class PassengerInputSerializer(serializers.ModelSerializer):
 class FlightInputSerializer(serializers.ModelSerializer):
     class Meta:
         model = Flight
-        exclude = ['booking', 'id']
+        exclude = ['flight_booking', 'id']  # Changed from 'booking' to 'flight_booking'
 
 class FlightBookingInputSerializer(serializers.Serializer):
     booking_type = serializers.ChoiceField(choices=FlightBooking.BOOKING_TYPE_CHOICES)
@@ -78,8 +85,6 @@ class FlightBookingInputSerializer(serializers.Serializer):
             raise serializers.ValidationError("Multi-city bookings must have at least two flight offers.")
 
         return data
-
-
 
 class FlightSearchSerializer(serializers.Serializer):
     origin = serializers.CharField(max_length=3)
@@ -111,13 +116,10 @@ class FlightSearchSerializer(serializers.Serializer):
 
         return data
 
-
 class FlightSegmentSerializer(serializers.Serializer):
     origin = serializers.CharField(max_length=3)
     destination = serializers.CharField(max_length=3)
     departure_date = serializers.DateField()
-
-
 
 class MultiCityFlightSearchSerializer(serializers.Serializer):
     segments = FlightSegmentSerializer(many=True, min_length=2)
@@ -174,7 +176,6 @@ class BookingConfirmationSerializer(serializers.Serializer):
     flights = serializers.ListField(child=serializers.JSONField())
     passengers = serializers.ListField(child=serializers.JSONField())
     payment_status = serializers.CharField()
-
 
 class PaymentInputSerializer(serializers.Serializer):
     payment_method_id = serializers.CharField(
