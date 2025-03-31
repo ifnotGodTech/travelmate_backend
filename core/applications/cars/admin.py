@@ -132,7 +132,21 @@ class CarBookingAdmin(admin.ModelAdmin):
     )
     raw_id_fields = ('car', 'pickup_location', 'dropoff_location', 'booking', 'cancelled_by')
     date_hierarchy = 'pickup_date'
-    readonly_fields = ('created_at', 'updated_at', 'cancellation_details')
+    readonly_fields = ('get_created_at', 'get_updated_at', 'cancellation_details')
+
+    @admin.display(
+        description="Created At"
+    )
+    def get_created_at(self, obj):
+        return obj.booking.created_at if obj.booking else None  # Fetch from related Booking
+
+    @admin.display(
+        description="Updated At"
+    )
+    def get_updated_at(self, obj):
+        return obj.booking.updated_at if obj.booking else None  # Fetch from related Booking
+
+
     fieldsets = (
         ('Booking Information', {
             'fields': (
