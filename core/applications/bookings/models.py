@@ -14,9 +14,9 @@ class BookingHistory(models.Model):
     notes = models.TextField(blank=True, null=True)
     changed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
     booking_type = models.CharField(max_length=20, choices=[('car', 'Car'), ('flight', 'Flight')])
-    
+
     # Store changes as JSON
     field_changes = models.JSONField(default=dict, blank=True)
-    
+
     class Meta:
         ordering = ['-changed_at']

@@ -230,7 +230,7 @@ class FlightBookingAdmin(admin.ModelAdmin):
         description='Total Amount'
     )
     def total_amount(self, obj):
-        if obj.booking.flight_payment:  
+        if obj.booking.flight_payment:
             return f"{obj.booking.flight_payment.amount} {obj.booking.flight_payment.currency}"
         return "-"
 

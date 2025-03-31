@@ -1119,5 +1119,3 @@ class PaymentViewSet(viewsets.ModelViewSet):
 #             return {'error': str(e), 'type': type(e).__name__}
 #         except Exception as e:
 #             return {'error': str(e)}
-
-
