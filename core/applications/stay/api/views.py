@@ -192,7 +192,7 @@ class HotelApiViewSet(ViewSet):
     #         }]
 
     #         travel_agent = {"contact": {"email": "support@yourcompany.com"}}
-    #         room_associations = [{"guestReferences": [{"id": "1"}], "hotelOfferId": offerId}]
+    #         room_associations = [{"guestReferences": [{"id": "1"}], "offerId": offerId}]
 
     #         payment = {
     #             "method": "creditCard",
@@ -249,7 +249,7 @@ class HotelApiViewSet(ViewSet):
             processed_guests = []
             for idx, guest in enumerate(guests, start=1):
                 processed_guests.append({
-                    "tid": str(idx),  # Amadeus uses 'tid' not 'id'
+                    "id": str(idx),  # Amadeus uses 'id' not 'id'
                     "title": guest.get("title", "MR"),  # Top level fields
                     "firstName": guest.get("firstName", "Guest"),
                     "lastName": guest.get("lastName", "User"),
@@ -275,8 +275,8 @@ class HotelApiViewSet(ViewSet):
 
             # Build room associations with correct format
             room_associations = [{
-                "guestReferences": [{"guestReference": g["tid"]} for g in processed_guests],
-                "hotelOfferId": offer_id  # Correct field name
+                "guestReferences": [{"guestReference": g["id"]} for g in processed_guests],
+                "offerId": offer_id  # Correct field name
             }]
 
             # Verify offer is still available
@@ -288,16 +288,22 @@ class HotelApiViewSet(ViewSet):
             booking_payload = {
                 "data": {
                     "type": "hotel-order",
-                    "hotelOfferId": offer_id,  # Correct field name
+                    "offerId": offer_id,  # ✅ Correct field name
                     "guests": processed_guests,
                     "payment": payment,
-                    "roomAssociations": room_associations,  # Corrected spelling
+                    "roomAssociations": [{
+                        "guestReferences": [{"id": g["id"]} for g in processed_guests],  # ✅ Use `id`, not `tid`
+                        "offerId": offer_id  # ✅ Use `offerId`, not `hotelOfferId`
+                    }],
                     "travelAgent": {
                         "contact": {"email": user.email}
                     }
                 }
             }
 
+            # Debugging: Print the payload before sending to Amadeus
+            print("Final Amadeus Booking Payload:")
+            print(json.dumps(booking_payload, indent=4), "?????????????????????")
             # Make the booking request
             booking_response = amadeus_client.booking.hotel_orders.post(booking_payload)
             booking = booking_response.data
