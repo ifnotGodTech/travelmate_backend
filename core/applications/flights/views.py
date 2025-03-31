@@ -999,250 +999,250 @@ class FlightSearchViewSet(viewsets.ViewSet):
 
 
 
-class FlightAdminViewSet(viewsets.ViewSet):
-    """
-    Admin-only operations for flight bookings
-    """
-    permission_classes = [IsAdminUser]
+# class FlightAdminViewSet(viewsets.ViewSet):
+#     """
+#     Admin-only operations for flight bookings
+#     """
+#     permission_classes = [IsAdminUser]
 
-    def retrieve(self, request, pk=None):
-        """
-        Get detailed booking information including user and flight details
-        """
-        try:
-            flight_booking = FlightBooking.objects.get(pk=pk)
+#     def retrieve(self, request, pk=None):
+#         """
+#         Get detailed booking information including user and flight details
+#         """
+#         try:
+#             flight_booking = FlightBooking.objects.get(pk=pk)
 
-            # Get all related data
-            booking_data = FlightBookingSerializer(flight_booking).data
+#             # Get all related data
+#             booking_data = FlightBookingSerializer(flight_booking).data
 
-            # Add user details
-            user = flight_booking.booking.user
-            user_data = {
-                'user': {
-                    'first_name': user.first_name,
-                    'last_name': user.last_name,
-                    'email': user.email,
-                    'phone_number': user.phone_number if hasattr(user, 'phone_number') else None,
-                    'address': user.address if hasattr(user, 'address') else None,
-                }
-            }
+#             # Add user details
+#             user = flight_booking.booking.user
+#             user_data = {
+#                 'user': {
+#                     'first_name': user.first_name,
+#                     'last_name': user.last_name,
+#                     'email': user.email,
+#                     'phone_number': user.phone_number if hasattr(user, 'phone_number') else None,
+#                     'address': user.address if hasattr(user, 'address') else None,
+#                 }
+#             }
 
-            # Add flight details
-            flights = Flight.objects.filter(flight_booking=flight_booking)
-            flight_data = {
-                'flights': [
-                    {
-                        'id': flight.id,
-                        'departure_airport': flight.departure_airport,
-                        'arrival_airport': flight.arrival_airport,
-                        'departure_datetime': flight.departure_datetime,
-                        'arrival_datetime': flight.arrival_datetime,
-                        'airline_code': flight.airline_code,
-                        'flight_number': flight.flight_number,
-                        'cabin_class': flight.cabin_class,
-                        'segment_id': flight.segment_id
-                    } for flight in flights
-                ]
-            }
+#             # Add flight details
+#             flights = Flight.objects.filter(flight_booking=flight_booking)
+#             flight_data = {
+#                 'flights': [
+#                     {
+#                         'id': flight.id,
+#                         'departure_airport': flight.departure_airport,
+#                         'arrival_airport': flight.arrival_airport,
+#                         'departure_datetime': flight.departure_datetime,
+#                         'arrival_datetime': flight.arrival_datetime,
+#                         'airline_code': flight.airline_code,
+#                         'flight_number': flight.flight_number,
+#                         'cabin_class': flight.cabin_class,
+#                         'segment_id': flight.segment_id
+#                     } for flight in flights
+#                 ]
+#             }
 
-            # Add passenger details
-            passenger_bookings = PassengerBooking.objects.filter(flight_booking=flight_booking)
-            passenger_data = {
-                'passengers': [
-                    {
-                        'first_name': pb.passenger.first_name,
-                        'last_name': pb.passenger.last_name,
-                        'email': pb.passenger.email,
-                        'phone': pb.passenger.phone,
-                        'passport_number': pb.passenger.passport_number,
-                        'passport_expiry': pb.passenger.passport_expiry,
-                        'nationality': pb.passenger.nationality,
-                        'ticket_number': pb.ticket_number
-                    } for pb in passenger_bookings
-                ]
-            }
+#             # Add passenger details
+#             passenger_bookings = PassengerBooking.objects.filter(flight_booking=flight_booking)
+#             passenger_data = {
+#                 'passengers': [
+#                     {
+#                         'first_name': pb.passenger.first_name,
+#                         'last_name': pb.passenger.last_name,
+#                         'email': pb.passenger.email,
+#                         'phone': pb.passenger.phone,
+#                         'passport_number': pb.passenger.passport_number,
+#                         'passport_expiry': pb.passenger.passport_expiry,
+#                         'nationality': pb.passenger.nationality,
+#                         'ticket_number': pb.ticket_number
+#                     } for pb in passenger_bookings
+#                 ]
+#             }
 
-            # Combine all data
-            response_data = {
-                **booking_data,
-                **user_data,
-                **flight_data,
-                **passenger_data
-            }
+#             # Combine all data
+#             response_data = {
+#                 **booking_data,
+#                 **user_data,
+#                 **flight_data,
+#                 **passenger_data
+#             }
 
-            return Response(response_data, status=status.HTTP_200_OK)
+#             return Response(response_data, status=status.HTTP_200_OK)
 
-        except FlightBooking.DoesNotExist:
-            return Response(
-                {"error": "Booking not found"},
-                status=status.HTTP_404_NOT_FOUND
-            )
+#         except FlightBooking.DoesNotExist:
+#             return Response(
+#                 {"error": "Booking not found"},
+#                 status=status.HTTP_404_NOT_FOUND
+#             )
 
-    @action(detail=True, methods=['patch'])
-    def update_flight(self, request, pk=None):
-        """
-        Update flight information (admin only)
-        """
-        try:
-            flight_booking = FlightBooking.objects.get(pk=pk)
-            flight_id = request.data.get('flight_id')
+#     @action(detail=True, methods=['patch'])
+#     def update_flight(self, request, pk=None):
+#         """
+#         Update flight information (admin only)
+#         """
+#         try:
+#             flight_booking = FlightBooking.objects.get(pk=pk)
+#             flight_id = request.data.get('flight_id')
 
-            if not flight_id:
-                return Response(
-                    {"error": "flight_id is required in request data"},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+#             if not flight_id:
+#                 return Response(
+#                     {"error": "flight_id is required in request data"},
+#                     status=status.HTTP_400_BAD_REQUEST
+#                 )
 
-            try:
-                flight = Flight.objects.get(id=flight_id, flight_booking=flight_booking)
-            except Flight.DoesNotExist:
-                return Response(
-                    {"error": "Flight not found for this booking"},
-                    status=status.HTTP_404_NOT_FOUND
-                )
+#             try:
+#                 flight = Flight.objects.get(id=flight_id, flight_booking=flight_booking)
+#             except Flight.DoesNotExist:
+#                 return Response(
+#                     {"error": "Flight not found for this booking"},
+#                     status=status.HTTP_404_NOT_FOUND
+#                 )
 
-            # Only allow updating certain fields
-            allowed_fields = ['departure_datetime', 'arrival_datetime', 'flight_number']
-            update_data = {k: v for k, v in request.data.items() if k in allowed_fields}
+#             # Only allow updating certain fields
+#             allowed_fields = ['departure_datetime', 'arrival_datetime', 'flight_number']
+#             update_data = {k: v for k, v in request.data.items() if k in allowed_fields}
 
-            if not update_data:
-                return Response(
-                    {"error": "No valid fields provided for update"},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+#             if not update_data:
+#                 return Response(
+#                     {"error": "No valid fields provided for update"},
+#                     status=status.HTTP_400_BAD_REQUEST
+#                 )
 
-            # Update the flight
-            for field, value in update_data.items():
-                setattr(flight, field, value)
-            flight.save()
+#             # Update the flight
+#             for field, value in update_data.items():
+#                 setattr(flight, field, value)
+#             flight.save()
 
-            return Response(
-                {"message": "Flight updated successfully"},
-                status=status.HTTP_200_OK
-            )
+#             return Response(
+#                 {"message": "Flight updated successfully"},
+#                 status=status.HTTP_200_OK
+#             )
 
-        except FlightBooking.DoesNotExist:
-            return Response(
-                {"error": "Booking not found"},
-                status=status.HTTP_404_NOT_FOUND
-            )
+#         except FlightBooking.DoesNotExist:
+#             return Response(
+#                 {"error": "Booking not found"},
+#                 status=status.HTTP_404_NOT_FOUND
+#             )
 
-    @action(detail=True, methods=['post'])
-    def admin_cancel(self, request, pk=None):
-        """
-        Admin cancellation of a booking with optional refund
-        """
-        try:
-            flight_booking = FlightBooking.objects.get(pk=pk)
+#     @action(detail=True, methods=['post'])
+#     def admin_cancel(self, request, pk=None):
+#         """
+#         Admin cancellation of a booking with optional refund
+#         """
+#         try:
+#             flight_booking = FlightBooking.objects.get(pk=pk)
 
-            if flight_booking.booking.status == 'CANCELLED':
-                return Response(
-                    {"error": "Booking is already cancelled"},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+#             if flight_booking.booking.status == 'CANCELLED':
+#                 return Response(
+#                     {"error": "Booking is already cancelled"},
+#                     status=status.HTTP_400_BAD_REQUEST
+#                 )
 
-            # Check if refund should be processed
-            process_refund = request.data.get('process_refund', False)
-            refund_amount = request.data.get('refund_amount')  # Optional partial refund
+#             # Check if refund should be processed
+#             process_refund = request.data.get('process_refund', False)
+#             refund_amount = request.data.get('refund_amount')  # Optional partial refund
 
-            # Call the existing cancellation logic
-            view = FlightBookingViewSet()
-            view.request = request
-            view.format_kwarg = {}
+#             # Call the existing cancellation logic
+#             view = FlightBookingViewSet()
+#             view.request = request
+#             view.format_kwarg = {}
 
-            response = view.cancel_booking(request, pk=pk)
+#             response = view.cancel_booking(request, pk=pk)
 
-            if response.status_code == 200:
-                # Add admin-specific cancellation notes
-                cancellation_reason = request.data.get('reason', 'Admin cancellation')
-                flight_booking.admin_notes = cancellation_reason
-                flight_booking.save()
+#             if response.status_code == 200:
+#                 # Add admin-specific cancellation notes
+#                 cancellation_reason = request.data.get('reason', 'Admin cancellation')
+#                 flight_booking.admin_notes = cancellation_reason
+#                 flight_booking.save()
 
-                # Process refund if requested
-                if process_refund:
-                    refund_result = self._process_refund(
-                        flight_booking,
-                        refund_amount=refund_amount,
-                        reason=cancellation_reason
-                    )
+#                 # Process refund if requested
+#                 if process_refund:
+#                     refund_result = self._process_refund(
+#                         flight_booking,
+#                         refund_amount=refund_amount,
+#                         reason=cancellation_reason
+#                     )
 
-                    if 'error' in refund_result:
-                        return Response(
-                            {"message": "Booking cancelled but refund failed", "refund_error": refund_result['error']},
-                            status=status.HTTP_207_MULTI_STATUS
-                        )
+#                     if 'error' in refund_result:
+#                         return Response(
+#                             {"message": "Booking cancelled but refund failed", "refund_error": refund_result['error']},
+#                             status=status.HTTP_207_MULTI_STATUS
+#                         )
 
-                    return Response(
-                        {"message": "Booking cancelled and refund processed", "refund_details": refund_result},
-                        status=status.HTTP_200_OK
-                    )
+#                     return Response(
+#                         {"message": "Booking cancelled and refund processed", "refund_details": refund_result},
+#                         status=status.HTTP_200_OK
+#                     )
 
-                return Response(
-                    {"message": "Booking cancelled successfully (no refund processed)"},
-                    status=status.HTTP_200_OK
-                )
-            else:
-                return response
+#                 return Response(
+#                     {"message": "Booking cancelled successfully (no refund processed)"},
+#                     status=status.HTTP_200_OK
+#                 )
+#             else:
+#                 return response
 
-        except FlightBooking.DoesNotExist:
-            return Response(
-                {"error": "Booking not found"},
-                status=status.HTTP_404_NOT_FOUND
-            )
+#         except FlightBooking.DoesNotExist:
+#             return Response(
+#                 {"error": "Booking not found"},
+#                 status=status.HTTP_404_NOT_FOUND
+#             )
 
-    def _process_refund(self, flight_booking, refund_amount=None, reason=None):
-        """
-        Process refund through Stripe
-        """
-        try:
-            # Get the payment details
-            payment = PaymentDetail.objects.filter(
-                booking=flight_booking.booking,
-                payment_status='COMPLETED'
-            ).first()
+#     def _process_refund(self, flight_booking, refund_amount=None, reason=None):
+#         """
+#         Process refund through Stripe
+#         """
+#         try:
+#             # Get the payment details
+#             payment = PaymentDetail.objects.filter(
+#                 booking=flight_booking.booking,
+#                 payment_status='COMPLETED'
+#             ).first()
 
-            if not payment:
-                return {'error': 'No completed payment found for this booking'}
+#             if not payment:
+#                 return {'error': 'No completed payment found for this booking'}
 
-            stripe.api_key = (
-                settings.STRIPE_SECRET_TEST_KEY
-                if settings.AMADEUS_API_TESTING
-                else settings.STRIPE_LIVE_SECRET_KEY
-            )
+#             stripe.api_key = (
+#                 settings.STRIPE_SECRET_TEST_KEY
+#                 if settings.AMADEUS_API_TESTING
+#                 else settings.STRIPE_LIVE_SECRET_KEY
+#             )
 
-            # Calculate refund amount (full or partial)
-            amount_to_refund = refund_amount or payment.amount * 100  # Convert to cents
+#             # Calculate refund amount (full or partial)
+#             amount_to_refund = refund_amount or payment.amount * 100  # Convert to cents
 
-            # Create refund
-            refund = stripe.Refund.create(
-                payment_intent=payment.transaction_id,
-                amount=int(amount_to_refund),
-                reason='requested_by_customer' if not reason else 'other',
-                metadata={
-                    'admin_refund': 'true',
-                    'booking_id': flight_booking.booking.id,
-                    'reason': reason or 'Admin-initiated refund'
-                }
-            )
+#             # Create refund
+#             refund = stripe.Refund.create(
+#                 payment_intent=payment.transaction_id,
+#                 amount=int(amount_to_refund),
+#                 reason='requested_by_customer' if not reason else 'other',
+#                 metadata={
+#                     'admin_refund': 'true',
+#                     'booking_id': flight_booking.booking.id,
+#                     'reason': reason or 'Admin-initiated refund'
+#                 }
+#             )
 
-            # Update payment record
-            payment.refund_amount = (refund_amount or payment.amount)
-            payment.refund_date = timezone.now()
-            payment.payment_status = 'REFUNDED' if refund_amount == payment.amount else 'PARTIALLY_REFUNDED'
-            payment.additional_details['refund_id'] = refund.id
-            payment.save()
+#             # Update payment record
+#             payment.refund_amount = (refund_amount or payment.amount)
+#             payment.refund_date = timezone.now()
+#             payment.payment_status = 'REFUNDED' if refund_amount == payment.amount else 'PARTIALLY_REFUNDED'
+#             payment.additional_details['refund_id'] = refund.id
+#             payment.save()
 
-            return {
-                'refund_id': refund.id,
-                'amount_refunded': refund.amount / 100,
-                'currency': refund.currency,
-                'status': refund.status
-            }
+#             return {
+#                 'refund_id': refund.id,
+#                 'amount_refunded': refund.amount / 100,
+#                 'currency': refund.currency,
+#                 'status': refund.status
+#             }
 
-        except stripe.error.StripeError as e:
-            return {'error': str(e), 'type': type(e).__name__}
-        except Exception as e:
-            return {'error': str(e)}
+#         except stripe.error.StripeError as e:
+#             return {'error': str(e), 'type': type(e).__name__}
+#         except Exception as e:
+#             return {'error': str(e)}
 
 
 

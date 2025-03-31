@@ -230,16 +230,16 @@ class FlightBookingAdmin(admin.ModelAdmin):
         description='Total Amount'
     )
     def total_amount(self, obj):
-        if obj.booking.payment:
-            return f"{obj.booking.payment.amount} {obj.booking.payment.currency}"
+        if obj.booking.flight_payment:  
+            return f"{obj.booking.flight_payment.amount} {obj.booking.flight_payment.currency}"
         return "-"
 
     @admin.display(
         description='Payment Status'
     )
     def payment_status(self, obj):
-        if obj.booking.payment:
-            return obj.booking.payment.get_payment_status_display()
+        if obj.booking.flight_payment:
+            return obj.booking.flight_payment.get_payment_status_display()
         return "-"
 
     @admin.display(
