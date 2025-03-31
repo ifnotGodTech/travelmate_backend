@@ -979,7 +979,7 @@ class CarAdminViewSet(viewsets.ViewSet):
                 status='UPDATED',
                 changed_at=timezone.now(),
                 notes=f"Booking updated by admin: {', '.join(update_data.keys())}"
-            ) 
+            )
 
             return Response(
                 {"message": "Booking updated successfully"},
