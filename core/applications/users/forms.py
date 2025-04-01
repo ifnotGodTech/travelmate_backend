@@ -42,3 +42,24 @@ class UserSocialSignupForm(SocialSignupForm):
     Default fields will be added automatically.
     See UserSignupForm otherwise.
     """
+
+
+class SuperCustomUserCreationForm(UserAdminCreationForm):
+    """
+    Custom form for creating a superuser.
+    Inherits from UserAdminCreationForm and adds necessary fields/validations.
+    """
+
+    class Meta(UserAdminCreationForm.Meta):
+        model = User
+        fields = ("email", "password1", "password2")
+        field_classes = {"email": EmailField}
+
+    def save(self, commit=True):
+        user = super().save(commit=False)
+        # Set superuser and staff flags
+        user.is_staff = True
+        user.is_superuser = True
+        if commit:
+            user.save()
+        return user
