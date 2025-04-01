@@ -1,3 +1,4 @@
+import json
 from django.conf import settings
 from rest_framework import viewsets, status
 from rest_framework.response import Response
@@ -6,6 +7,7 @@ from rest_framework.decorators import permission_classes
 from rest_framework.decorators import action
 from django.core.cache import cache
 from django.db import transaction
+from django.utils.dateparse import parse_duration
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
@@ -32,10 +34,9 @@ class StripePaymentProcessor:
     Payment processor for handling Stripe payments with custom rate
     """
     def __init__(self):
-        # Retrieve service fee from the model
-        self.service_rate_percentage = ServiceFeeSetting.get_current_fee() / Decimal('100')
+        # Convert percentage to decimal (e.g., 5% -> 0.05)
+        self.service_rate_percentage = Decimal(str(ServiceFeeSetting.get_current_fee())) / Decimal('100')
 
-        # Set up Stripe with the appropriate key based on testing mode
         stripe.api_key = (
             settings.STRIPE_SECRET_TEST_KEY
             if settings.AMADEUS_API_TESTING
@@ -43,90 +44,54 @@ class StripePaymentProcessor:
         )
 
     def calculate_total_price(self, amadeus_price):
-        """
-        Calculate total price including Amadeus price and service rate
-
-        Args:
-            amadeus_price (Decimal): Base price from Amadeus
-
-        Returns:
-            Decimal: Total price with service rate
-        """
+        """Calculate total price including service fee"""
         service_fee = amadeus_price * self.service_rate_percentage
         return amadeus_price + service_fee
 
-    def split_payment(self, total_price):
+    def split_payment(self, total_amount):
         """
-        Split payment between service and actual flight cost
-
-        Args:
-            total_price (Decimal): Total price including service rate
-
-        Returns:
-            Dict: Split of service fee and flight cost
+        Split payment between service fee and flight cost
+        This ensures the service fee is always calculated from the base flight cost
         """
-        service_fee = total_price * self.service_rate_percentage
-        flight_cost = total_price - service_fee
+        # Calculate what the base flight cost would be without service fee
+        base_flight_cost = total_amount / (1 + self.service_rate_percentage)
+        service_fee = total_amount - base_flight_cost
 
         return {
-            'total_price': total_price,
-            'flight_cost': flight_cost,
-            'service_fee': service_fee,
+            'total_price': float(total_amount),
+            'flight_cost': float(base_flight_cost),
+            'service_fee': float(service_fee),
             'service_fee_percentage': float(self.service_rate_percentage * 100)
         }
 
     def create_payment_intent(self, flight_booking, payment_method):
-        """
-        Create a Stripe Payment Intent
-
-        Args:
-            flight_booking (FlightBooking): Booking instance
-            payment_method (str): Stripe payment method ID
-
-        Returns:
-            Dict: Stripe payment intent details
-        """
         try:
-            # Calculate total price with service rate
-            total_price = self.calculate_total_price(flight_booking.booking.total_price)
+            # Calculate total price with service fee
+            total_price = self.calculate_total_price(flight_booking.base_flight_cost)
             payment_split = self.split_payment(total_price)
 
-            # Create Payment Intent
+            # Create Payment Intent with correct amounts
             payment_intent = stripe.PaymentIntent.create(
                 amount=int(total_price * 100),  # Convert to cents
                 currency=flight_booking.currency.lower(),
                 payment_method=payment_method,
                 confirm=True,
-                automatic_payment_methods={
-                    "enabled": True,
-                    "allow_redirects": "never"
-                },
                 metadata={
                     'flight_booking_id': flight_booking.id,
-                    'booking_id': flight_booking.booking.id if flight_booking.booking else None,
-                    'flight_cost': float(payment_split['flight_cost']),
-                    'service_fee': float(payment_split['service_fee']),
-                    'service_fee_percentage': float(payment_split['service_fee_percentage'])
+                    'booking_id': flight_booking.booking.id,
+                    'base_flight_cost': float(flight_booking.base_flight_cost),
+                    'service_fee': payment_split['service_fee'],
+                    'service_fee_percentage': payment_split['service_fee_percentage']
                 }
             )
 
             return {
                 'payment_intent_id': payment_intent.id,
                 'client_secret': payment_intent.client_secret,
-                'payment_split': {
-                    'total_price': float(payment_split['total_price']),
-                    'flight_cost': float(payment_split['flight_cost']),
-                    'service_fee': float(payment_split['service_fee']),
-                    'service_fee_percentage': float(payment_split['service_fee_percentage'])
-                }
+                'payment_split': payment_split
             }
-
         except stripe.error.StripeError as e:
-            # Handle Stripe-specific errors
-            return {
-                'error': str(e),
-                'type': type(e).__name__
-            }
+            return {'error': str(e)}
 
 
 class FlightBookingViewSet(viewsets.ModelViewSet):
@@ -195,23 +160,50 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
 
         # Create flight records from the cached flight offers
         for flight_offer in flight_offers:
-            Flight.objects.create(
-                flight_booking=flight_booking,  # Updated field name
-                departure_airport=flight_offer['itineraries'][0]['segments'][0]['departure']['iataCode'],
-                arrival_airport=flight_offer['itineraries'][0]['segments'][-1]['arrival']['iataCode'],
-                departure_datetime=datetime.strptime(
-                    flight_offer['itineraries'][0]['segments'][0]['departure']['at'],
-                    '%Y-%m-%dT%H:%M:%S'
-                ),
-                arrival_datetime=datetime.strptime(
-                    flight_offer['itineraries'][0]['segments'][-1]['arrival']['at'],
-                    '%Y-%m-%dT%H:%M:%S'
-                ),
-                airline_code=flight_offer['itineraries'][0]['segments'][0]['carrierCode'],
-                flight_number=flight_offer['itineraries'][0]['segments'][0]['number'],
-                cabin_class=flight_offer.get('class', 'ECONOMY'),
-                segment_id=flight_offer['itineraries'][0]['segments'][0]['id']
-            )
+            for itinerary_idx, itinerary in enumerate(flight_offer.get('itineraries', [])):
+                for segment in itinerary.get('segments', []):
+                    # Get fare details from traveler pricing
+                    fare_details = {}
+                    if flight_offer.get('travelerPricings'):
+                        traveler_pricing = flight_offer['travelerPricings'][0]
+                        for fare_segment in traveler_pricing.get('fareDetailsBySegment', []):
+                            if fare_segment.get('segmentId') == segment.get('id'):
+                                fare_details = fare_segment
+                                break
+
+                    # Create flight instance with all details
+                    Flight.objects.create(
+                        flight_booking=flight_booking,
+                        itinerary_index=itinerary_idx,
+                        flight_number=segment.get('number'),
+                        airline_code=segment.get('carrierCode'),
+                        operating_airline=segment.get('operating', {}).get('carrierCode'),
+                        departure_airport=segment.get('departure', {}).get('iataCode'),
+                        departure_terminal=segment.get('departure', {}).get('terminal', ''),
+                        departure_city=segment.get('departure', {}).get('city', ''),
+                        departure_datetime=datetime.strptime(
+                            segment.get('departure', {}).get('at'),
+                            '%Y-%m-%dT%H:%M:%S'
+                        ),
+                        arrival_airport=segment.get('arrival', {}).get('iataCode'),
+                        arrival_terminal=segment.get('arrival', {}).get('terminal', ''),
+                        arrival_city=segment.get('arrival', {}).get('city', ''),
+                        arrival_datetime=datetime.strptime(
+                            segment.get('arrival', {}).get('at'),
+                            '%Y-%m-%dT%H:%M:%S'
+                        ),
+                        aircraft_code=segment.get('aircraft', {}).get('code'),
+                        segment_id=segment.get('id'),
+                        number_of_stops=segment.get('numberOfStops', 0),
+                        duration=parse_duration(segment.get('duration', 'PT0H0M')),
+                        cabin_class=fare_details.get('cabin', 'ECONOMY'),
+                        fare_basis=fare_details.get('fareBasis', ''),
+                        fare_class=fare_details.get('class', ''),
+                        fare_brand=fare_details.get('brandedFare', ''),
+                        fare_brand_label=fare_details.get('brandedFareLabel', ''),
+                        included_checked_bags=fare_details.get('includedCheckedBags', {}).get('quantity', 0),
+                        blacklisted_in_eu=segment.get('blacklistedInEU', False)
+                    )
 
         # Create passenger records and link them to the booking
         for passenger_data in passengers_data:
@@ -405,23 +397,43 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
         """
         Create the actual booking with Amadeus API with segment validation
         """
-        flights = Flight.objects.filter(flight_booking=flight_booking)  # Updated field name
-        passenger_bookings = PassengerBooking.objects.filter(flight_booking=flight_booking).select_related('passenger')  # Updated field name
+        flights = Flight.objects.filter(flight_booking=flight_booking)
+        passenger_bookings = PassengerBooking.objects.filter(flight_booking=flight_booking).select_related('passenger')
 
-        # 1. First validate flight segments are still available
         try:
-            flight_offers = self._prepare_flight_offers(flight_booking, flights)
+            # Try to get the original flight offers from cache
+            flight_offers = []
+            for flight in flights:
+                # Try to find the original offer using the segment ID
+                cache_key = f"flight_offer_by_segment_{flight.segment_id}"
+                cached_offer = cache.get(cache_key)
 
-            # Verify each segment in each flight offer
-            for offer in flight_offers:
-                for itinerary in offer.get('itineraries', []):
-                    for segment in itinerary.get('segments', []):
-                        if not segment.get('id'):
-                            raise ValueError("Missing segment ID in flight offer")
-                        if not all(segment.get(k) for k in ['departure', 'arrival', 'carrierCode', 'number']):
-                            raise ValueError("Incomplete segment data")
+                if cached_offer:
+                    flight_offers.append(cached_offer)
+                    continue
 
-            # 2. Prepare travelers data
+                # Fallback to searching by flight details if segment-based cache fails
+                for offer_id in self._find_offer_ids_for_flight(flight):
+                    cache_key = f"flight_offer_{offer_id}"
+                    cached_offer = cache.get(cache_key)
+                    if cached_offer:
+                        flight_offers.append(cached_offer)
+                        # Cache the offer by segment ID for future reference
+                        cache.set(f"flight_offer_by_segment_{flight.segment_id}", cached_offer, timeout=3600)
+                        break
+
+            # If no offers found in cache, use reconstructed offers but with proper pricing
+            if not flight_offers:
+                print("No cached flight offers found, using reconstructed data")
+                flight_offers = self._prepare_flight_offers(flight_booking, flights)
+            else:
+                # Ensure we're using the base price without service fee
+                for offer in flight_offers:
+                    if 'price' in offer:
+                        offer['price']['total'] = str(flight_booking.base_flight_cost)
+                        offer['price']['grandTotal'] = str(flight_booking.base_flight_cost)
+
+            # Rest of the method remains the same...
             travelers = []
             for i, pb in enumerate(passenger_bookings, 1):
                 traveler = {
@@ -454,7 +466,7 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
                     }]
                 travelers.append(traveler)
 
-            # 3. Prepare the complete payload
+            # Prepare the complete payload
             amadeus_payload = {
                 'data': {
                     'type': 'flight-order',
@@ -484,22 +496,29 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
                         }],
                         'emailAddress': flight_booking.booking.user.email,
                         'address': {
-                            'lines': ['123 Main Street'],
-                            'postalCode': '10001',
-                            'cityName': 'New York',
-                            'countryCode': 'US'
+                            'lines': [passenger_bookings.first().passenger.address_line1] if hasattr(passenger_bookings.first().passenger, 'address_line1') else ['123 Main Street'],
+                            'postalCode': passenger_bookings.first().passenger.postal_code if hasattr(passenger_bookings.first().passenger, 'postal_code') else '10001',
+                            'cityName': passenger_bookings.first().passenger.city if hasattr(passenger_bookings.first().passenger, 'city') else 'New York',
+                            'countryCode': passenger_bookings.first().passenger.country_code if hasattr(passenger_bookings.first().passenger, 'country_code') else 'US'
                         }
                     }]
                 }
             }
 
-            # 4. Make the API call
+            # Log the payload for debugging
+            print(f"Amadeus booking payload: {json.dumps(amadeus_payload, indent=2)}")
+
+            # Make the API call
             amadeus_client = AmadeusAPI()
             response = requests.post(
                 f"{amadeus_client.base_url}/v1/booking/flight-orders",
                 headers=amadeus_client._get_headers(),
                 json=amadeus_payload
             )
+
+            # Log the full response for debugging
+            print(f"Amadeus API response status: {response.status_code}")
+            print(f"Amadeus API response body: {response.text}")
 
             if response.status_code == 201:
                 amadeus_data = response.json()
@@ -508,129 +527,156 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
                 self._update_ticket_numbers(flight_booking, amadeus_data)
                 return True
 
-            # Enhanced error handling for segment errors
+            # Handle errors
             error_details = response.json().get('errors', [])
             for error in error_details:
-                print(f"Amadeus Error {error.get('code')}: {error.get('detail')}")
-                if error.get('code') == 34651:  # Segment selling error
-                    print("This flight segment may no longer be available. Please perform a new search.")
+                error_code = error.get('code')
+                error_detail = error.get('detail')
+                print(f"Amadeus Error {error_code}: {error_detail}")
 
             return False
 
-        except ValueError as e:
-            print(f"Flight data validation error: {str(e)}")
-            return False
         except Exception as e:
             print(f"Error creating Amadeus booking: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return False
-
 
     def _prepare_flight_offers(self, flight_booking, flights):
         """
-        Prepare flight offers data for Amadeus API
+        Prepare flight offers data for Amadeus API when cached data isn't available
+        Handles multi-city flights and preserves all necessary flight details
         """
-        # use the flight offers from Amadeus search API
         flight_offers = []
 
-        # For demonstration, we'll create a simple flight offer structure
-        segments = []
+        # Group segments by itinerary (for multi-city support)
+        segments_by_itinerary = {}
         for flight in flights:
+            # Use the itinerary_index stored in Flight model for multi-city
+            itinerary_key = getattr(flight, 'itinerary_index', 0)
+            if itinerary_key not in segments_by_itinerary:
+                segments_by_itinerary[itinerary_key] = []
+
             segment = {
                 'departure': {
                     'iataCode': flight.departure_airport,
-                    'terminal': '',
+                    'terminal': flight.departure_terminal or '',
                     'at': flight.departure_datetime.strftime('%Y-%m-%dT%H:%M:%S')
                 },
                 'arrival': {
                     'iataCode': flight.arrival_airport,
-                    'terminal': '',
+                    'terminal': flight.arrival_terminal or '',
                     'at': flight.arrival_datetime.strftime('%Y-%m-%dT%H:%M:%S')
                 },
                 'carrierCode': flight.airline_code,
                 'number': flight.flight_number,
                 'aircraft': {
-                    'code': 'A320'  # Placeholder
+                    'code': flight.aircraft_code or 'UNKNOWN'
                 },
                 'operating': {
-                    'carrierCode': flight.airline_code
+                    'carrierCode': flight.operating_airline or flight.airline_code
                 },
-                'duration': 'PT2H',  # Placeholder
+                'duration': self._calculate_segment_duration(flight.departure_datetime, flight.arrival_datetime),
                 'id': flight.segment_id,
-                'numberOfStops': 0,
-                'blacklistedInEU': False
+                'numberOfStops': flight.number_of_stops or 0,
+                'blacklistedInEU': False,
+                # Include fare details if available
+                'fareBasis': flight.fare_basis or '',
+                'class': flight.fare_class or 'Y',
+                'brandedFare': flight.fare_brand or '',
+                'brandedFareLabel': flight.fare_brand_label or ''
             }
-            segments.append(segment)
+            segments_by_itinerary[itinerary_key].append(segment)
 
-        # Create a flight offer with segments
-        offer = {
-            'type': 'flight-offer',
-            'id': '1',
-            'source': 'GDS',
-            'instantTicketingRequired': False,
-            'nonHomogeneous': False,
-            'oneWay': flight_booking.booking_type == 'ONE_WAY',
-            'lastTicketingDate': (timezone.now() + timezone.timedelta(days=3)).strftime('%Y-%m-%d'),
-            'numberOfBookableSeats': PassengerBooking.objects.filter(flight_booking=flight_booking).count(),  # Updated field name
-            'itineraries': [
-                {
-                    'duration': 'PT2H',  # Placeholder
+        # Create flight offers with proper pricing and structure
+        for itinerary_idx, segments in sorted(segments_by_itinerary.items()):
+            # Calculate pricing per passenger
+            num_passengers = PassengerBooking.objects.filter(flight_booking=flight_booking).count()
+            base_price_per_passenger = flight_booking.base_flight_cost / num_passengers if num_passengers > 0 else Decimal('0.00')
+
+            offer = {
+                'type': 'flight-offer',
+                'id': str(flight_booking.id) + f'_{itinerary_idx}',
+                'source': 'GDS',
+                'instantTicketingRequired': False,
+                'nonHomogeneous': False,
+                'oneWay': flight_booking.booking_type == 'ONE_WAY',
+                'lastTicketingDate': (timezone.now() + timezone.timedelta(days=3)).strftime('%Y-%m-%d'),
+                'numberOfBookableSeats': num_passengers,
+                'itineraries': [{
+                    'duration': self._calculate_itinerary_duration(segments),
                     'segments': segments
-                }
-            ],
-            'price': {
-                'currency': flight_booking.currency,
-                'total': str(flight_booking.booking.total_price),
-                'base': str(flight_booking.booking.total_price * Decimal('0.8')),  # Placeholder
-                'fees': [
-                    {
-                        'amount': str(flight_booking.booking.total_price * Decimal('0.1')),
-                        'type': 'SUPPLIER'
-                    },
-                    {
-                        'amount': str(flight_booking.booking.total_price * Decimal('0.1')),
-                        'type': 'TICKETING'
-                    }
-                ],
-                'grandTotal': str(flight_booking.booking.total_price)
-            },
-            'pricingOptions': {
-                'fareType': ['PUBLISHED'],
-                'includedCheckedBagsOnly': True
-            },
-            'validatingAirlineCodes': [flights[0].airline_code],
-            'travelerPricings': self._prepare_traveler_pricings(flight_booking)
-        }
+                }],
+                'price': {
+                    'currency': flight_booking.currency,
+                    'total': str(base_price_per_passenger),  # Per passenger price
+                    'base': str(base_price_per_passenger * Decimal('0.8')),  # 80% of total as base
+                    'fees': [
+                        {
+                            'amount': '0.00',
+                            'type': 'SUPPLIER'
+                        },
+                        {
+                            'amount': '0.00',
+                            'type': 'TICKETING'
+                        }
+                    ],
+                    'grandTotal': str(base_price_per_passenger),
+                    'additionalServices': self._get_additional_services(flight_booking)
+                },
+                'pricingOptions': {
+                    'fareType': ['PUBLISHED'],
+                    'includedCheckedBagsOnly': False
+                },
+                'validatingAirlineCodes': [segments[0]['carrierCode']] if segments else [],
+                'travelerPricings': self._prepare_traveler_pricings(flight_booking, segments)
+            }
+            flight_offers.append(offer)
 
-        flight_offers.append(offer)
         return flight_offers
 
-    def _prepare_traveler_pricings(self, flight_booking):
+    def _prepare_traveler_pricings(self, flight_booking, segments=None):
         """
-        Prepare traveler pricing data for Amadeus API
+        Prepare traveler pricing with proper fare details from segments
         """
         traveler_pricings = []
-        passenger_bookings = PassengerBooking.objects.filter(flight_booking=flight_booking)  # Updated field name
+        passenger_bookings = PassengerBooking.objects.filter(flight_booking=flight_booking)
 
         for i, pb in enumerate(passenger_bookings, 1):
+            fare_details = []
+            if segments:
+                for segment in segments:
+                    fare_details.append({
+                        'segmentId': segment.get('id'),
+                        'cabin': segment.get('cabin', 'ECONOMY'),
+                        'fareBasis': segment.get('fareBasis', ''),
+                        'class': segment.get('class', 'Y'),
+                        'brandedFare': segment.get('brandedFare', ''),
+                        'brandedFareLabel': segment.get('brandedFareLabel', ''),
+                        'includedCheckedBags': {
+                            'quantity': segment.get('included_checked_bags', 0)
+                        }
+                    })
+
             pricing = {
                 'travelerId': str(i),
                 'fareOption': 'STANDARD',
-                'travelerType': 'ADULT',  # Assuming all are adults for simplicity
+                'travelerType': 'ADULT',
                 'price': {
                     'currency': flight_booking.currency,
-                    'total': str(flight_booking.booking.total_price / passenger_bookings.count()),
-                    'base': str(flight_booking.booking.total_price * Decimal('0.8') / passenger_bookings.count())
+                    'total': str(flight_booking.base_flight_cost / passenger_bookings.count()),
+                    'base': str(flight_booking.base_flight_cost * Decimal('0.8') / passenger_bookings.count())
                 },
-                'fareDetailsBySegment': [
+                'fareDetailsBySegment': fare_details if fare_details else [
                     {
-                        'segmentId': flight.segment_id,
-                        'cabin': flight.cabin_class,
-                        'fareBasis': 'ABCDEF',  # Placeholder
-                        'class': 'Y',  # Placeholder
+                        'segmentId': segment.get('id'),
+                        'cabin': 'ECONOMY',
+                        'fareBasis': 'STANDARD',
+                        'class': 'Y',
                         'includedCheckedBags': {
-                            'quantity': 1
+                            'quantity': 0
                         }
-                    } for flight in Flight.objects.filter(flight_booking=flight_booking)  # Updated field name
+                    } for segment in (segments or [])
                 ]
             }
             traveler_pricings.append(pricing)
@@ -686,6 +732,26 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
             travelers.append(traveler)
 
         return travelers
+
+    def _calculate_segment_duration(self, departure, arrival):
+        """Calculate ISO 8601 duration string for a flight segment"""
+        delta = arrival - departure
+        hours, remainder = divmod(delta.total_seconds(), 3600)
+        minutes = remainder // 60
+        return f"PT{int(hours)}H{int(minutes)}M"
+
+    def _calculate_itinerary_duration(self, segments):
+        """Calculate total duration for an itinerary"""
+        if not segments:
+            return "PT0H0M"
+
+        first_segment = segments[0]
+        last_segment = segments[-1]
+
+        departure = datetime.strptime(first_segment['departure']['at'], '%Y-%m-%dT%H:%M:%S')
+        arrival = datetime.strptime(last_segment['arrival']['at'], '%Y-%m-%dT%H:%M:%S')
+
+        return self._calculate_segment_duration(departure, arrival)
 
     def _update_ticket_numbers(self, flight_booking, amadeus_data):
         """
@@ -790,9 +856,16 @@ class FlightSearchViewSet(viewsets.ViewSet):
             if 'data' in flight_offers:
                 for offer in flight_offers['data']:
                     if 'id' in offer:
+                        # Cache by offer ID
                         cache_key = f"flight_offer_{offer['id']}"
-                        # Cache for a reasonable time (e.g., 1 hour)
                         cache.set(cache_key, offer, timeout=3600)
+
+                        # Also cache by segment IDs for easier lookup later
+                        for itinerary in offer.get('itineraries', []):
+                            for segment in itinerary.get('segments', []):
+                                if 'id' in segment:
+                                    segment_cache_key = f"flight_offer_by_segment_{segment['id']}"
+                                    cache.set(segment_cache_key, offer, timeout=3600)
 
             return Response(flight_offers, status=status.HTTP_200_OK)
 
@@ -846,9 +919,16 @@ class FlightSearchViewSet(viewsets.ViewSet):
             if 'data' in flight_offers:
                 for offer in flight_offers['data']:
                     if 'id' in offer:
+                        # Cache by offer ID
                         cache_key = f"flight_offer_{offer['id']}"
-                        # Cache for a reasonable time (e.g., 1 hour)
                         cache.set(cache_key, offer, timeout=3600)
+
+                        # Also cache by segment IDs for easier lookup later
+                        for itinerary in offer.get('itineraries', []):
+                            for segment in itinerary.get('segments', []):
+                                if 'id' in segment:
+                                    segment_cache_key = f"flight_offer_by_segment_{segment['id']}"
+                                    cache.set(segment_cache_key, offer, timeout=3600)
 
             return Response(flight_offers, status=status.HTTP_200_OK)
 
@@ -896,9 +976,16 @@ class FlightSearchViewSet(viewsets.ViewSet):
             if 'data' in flight_offers:
                 for offer in flight_offers['data']:
                     if 'id' in offer:
+                        # Cache by offer ID
                         cache_key = f"flight_offer_{offer['id']}"
-                        # Cache for a reasonable time (e.g., 1 hour)
                         cache.set(cache_key, offer, timeout=3600)
+
+                        # Also cache by segment IDs for easier lookup later
+                        for itinerary in offer.get('itineraries', []):
+                            for segment in itinerary.get('segments', []):
+                                if 'id' in segment:
+                                    segment_cache_key = f"flight_offer_by_segment_{segment['id']}"
+                                    cache.set(segment_cache_key, offer, timeout=3600)
 
             return Response(flight_offers, status=status.HTTP_200_OK)
 

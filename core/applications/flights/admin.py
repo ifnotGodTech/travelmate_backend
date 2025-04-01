@@ -290,39 +290,84 @@ class FlightBookingAdmin(admin.ModelAdmin):
 @admin.register(Flight)
 class FlightAdmin(admin.ModelAdmin):
     list_display = (
-        'flight_number',
-        'airline_name',
-        'route',
+        'flight_number_with_airline',
+        'route_with_cities',
         'departure_datetime',
         'arrival_datetime',
         'flight_duration',
-        'cabin_class'
+        'cabin_class',
+        'number_of_stops'
     )
     list_filter = (
         'airline_name',
         'cabin_class',
+        'number_of_stops',
+        'included_checked_bags',
+        'blacklisted_in_eu',
         ('departure_datetime', admin.DateFieldListFilter)
     )
     search_fields = (
         'flight_number',
+        'airline_code',
+        'airline_name',
         'departure_airport',
         'arrival_airport',
-        'flight_booking__booking_reference'
+        'departure_city',
+        'arrival_city',
+        'flight_booking__booking_reference',
+        'fare_brand'
     )
     raw_id_fields = ('flight_booking',)
-    readonly_fields = ('segment_id',)
-
-    @admin.display(
-        description='Route'
+    readonly_fields = ('segment_id', 'created_at', 'updated_at')
+    fieldsets = (
+        ('Booking Information', {
+            'fields': ('flight_booking',)
+        }),
+        ('Flight Information', {
+            'fields': (
+                'flight_number', 'airline_code', 'airline_name', 'operating_airline',
+                'aircraft_code', 'aircraft_name', 'segment_id', 'number_of_stops'
+            )
+        }),
+        ('Departure Information', {
+            'fields': (
+                'departure_airport', 'departure_city', 'departure_terminal', 'departure_datetime'
+            )
+        }),
+        ('Arrival Information', {
+            'fields': (
+                'arrival_airport', 'arrival_city', 'arrival_terminal', 'arrival_datetime', 'duration'
+            )
+        }),
+        ('Fare Information', {
+            'fields': (
+                'cabin_class', 'fare_basis', 'fare_class', 'fare_brand', 'fare_brand_label',
+                'included_checked_bags'
+            )
+        }),
+        ('Additional Information', {
+            'fields': (
+                'itinerary_index', 'blacklisted_in_eu', 'instant_ticketing_required',
+                'created_at', 'updated_at'
+            )
+        }),
     )
-    def route(self, obj):
-        return f"{obj.departure_airport} → {obj.arrival_airport}"
 
-    @admin.display(
-        description='Duration'
-    )
+    @admin.display(description='Flight')
+    def flight_number_with_airline(self, obj):
+        return f"{obj.airline_code}{obj.flight_number}"
+
+    @admin.display(description='Route')
+    def route_with_cities(self, obj):
+        return f"{obj.departure_airport} ({obj.departure_city}) → {obj.arrival_airport} ({obj.arrival_city})"
+
+    @admin.display(description='Duration')
     def flight_duration(self, obj):
-        if obj.departure_datetime and obj.arrival_datetime:
+        if obj.duration:
+            hours, remainder = divmod(obj.duration.total_seconds(), 3600)
+            minutes = remainder // 60
+            return f"{int(hours)}h {int(minutes)}m"
+        elif obj.departure_datetime and obj.arrival_datetime:
             duration = obj.arrival_datetime - obj.departure_datetime
             hours, remainder = divmod(duration.total_seconds(), 3600)
             minutes = remainder // 60

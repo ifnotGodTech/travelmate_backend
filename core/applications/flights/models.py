@@ -103,7 +103,7 @@ class FlightBooking(auto_prefetch.Model):
         return uuid.uuid4().hex[:10].upper()
 
     booking_reference = models.CharField(
-        max_length=10,
+        max_length=100,
         unique=True,
         default=generate_booking_reference
     )
@@ -124,23 +124,75 @@ class FlightBooking(auto_prefetch.Model):
 
     def __str__(self):
         return f"{self.booking_reference} - {self.booking.user.username}"
+    class Meta(auto_prefetch.Model.Meta):
+        pass
+
+
 
 class Flight(auto_prefetch.Model):
-    flight_booking = auto_prefetch.ForeignKey(FlightBooking, on_delete=models.CASCADE, related_name='flights')
+    flight_booking = auto_prefetch.ForeignKey(
+        FlightBooking,
+        on_delete=models.CASCADE,
+        related_name='flights'
+    )
+
+    # Basic flight info
     flight_number = models.CharField(max_length=10)
     airline_code = models.CharField(max_length=3)
-    airline_name = models.CharField(max_length=100)
+    airline_name = models.CharField(max_length=100, blank=True)
+    operating_airline = models.CharField(max_length=3, blank=True)  # For codeshare flights
+
+    # Departure info
     departure_airport = models.CharField(max_length=3)
+    departure_terminal = models.CharField(max_length=10, blank=True)
     departure_city = models.CharField(max_length=100)
     departure_datetime = models.DateTimeField()
+
+    # Arrival info
     arrival_airport = models.CharField(max_length=3)
+    arrival_terminal = models.CharField(max_length=10, blank=True)
     arrival_city = models.CharField(max_length=100)
     arrival_datetime = models.DateTimeField()
-    cabin_class = models.CharField(max_length=50)
+
+    # Aircraft info
+    aircraft_code = models.CharField(max_length=10, blank=True)
+    aircraft_name = models.CharField(max_length=50, blank=True)
+
+    # Segment info
     segment_id = models.CharField(max_length=100)  # From Amadeus API
+    number_of_stops = models.PositiveSmallIntegerField(default=0)
+    duration = models.DurationField(blank=True, null=True)
+
+    # Fare info
+    cabin_class = models.CharField(max_length=20, default='ECONOMY')
+    fare_basis = models.CharField(max_length=20, blank=True)  # e.g. 'PI7QUSL1'
+    fare_class = models.CharField(max_length=1, blank=True)  # e.g. 'L'
+    fare_brand = models.CharField(max_length=50, blank=True)  # e.g. 'BLUE BASIC'
+    fare_brand_label = models.CharField(max_length=100, blank=True)
+    included_checked_bags = models.PositiveSmallIntegerField(default=0)
+
+    # For multi-city support
+    itinerary_index = models.PositiveSmallIntegerField(
+        default=0,
+        help_text="Index for ordering flights in multi-city itineraries"
+    )
+
+    # Additional metadata
+    blacklisted_in_eu = models.BooleanField(default=False)
+    instant_ticketing_required = models.BooleanField(default=False)
+
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"{self.flight_number}: {self.departure_airport} to {self.arrival_airport}"
+        return f"{self.airline_code}{self.flight_number}: {self.departure_airport} to {self.arrival_airport}"
+
+    class Meta(auto_prefetch.Model.Meta):
+        ordering = ['itinerary_index', 'departure_datetime']
+
+
+
 
 class PassengerBooking(auto_prefetch.Model):
     flight_booking = auto_prefetch.ForeignKey(FlightBooking, on_delete=models.CASCADE, related_name='passenger_bookings')
