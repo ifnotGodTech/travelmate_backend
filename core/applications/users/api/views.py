@@ -173,7 +173,7 @@ token_blacklist = TokenBlacklistView.as_view()
 class OTPRegistrationViewSet(ViewSet):
     """Handles OTP-based registration and verification."""
     permission_classes = [AllowAny]
-    OTP_EXPIRY = 400  # 6 minutes
+    OTP_EXPIRY = 600    # 10 minutes
     OTP_DIGITS = 4
     OTP_SECRET = "JBSWY3DPEHPK3PXP"
 
@@ -181,6 +181,8 @@ class OTPRegistrationViewSet(ViewSet):
         """Generates and caches a 4-digit OTP."""
         otp = pyotp.TOTP(self.OTP_SECRET, digits=self.OTP_DIGITS).now()
         cache.set(email, otp, timeout=self.OTP_EXPIRY)
+        logger.info(f"Generated OTP for {email}: {otp}")
+        logger.info(cache.get("test_key"), "<<<<<<<<<<<<<<<<>>>>>>>>>>>")
         logger.info(f"OTP generated for {email}")
         return otp
 
@@ -197,6 +199,7 @@ class OTPRegistrationViewSet(ViewSet):
     def validate_otp(self, email, otp):
         """Validates OTP from cache."""
         cached_otp = cache.get(email)
+        logger.info(f"Validating OTP for {email}: Received {otp}, Cached {cached_otp}")
         if cached_otp == otp:
             cache.delete(email)
             return True
