@@ -66,16 +66,18 @@ class StripePaymentProcessor:
 
     def create_payment_intent(self, flight_booking, payment_method):
         try:
-            # Calculate total price with service fee
             total_price = self.calculate_total_price(flight_booking.base_flight_cost)
             payment_split = self.split_payment(total_price)
 
-            # Create Payment Intent with correct amounts
             payment_intent = stripe.PaymentIntent.create(
                 amount=int(total_price * 100),  # Convert to cents
                 currency=flight_booking.currency.lower(),
                 payment_method=payment_method,
                 confirm=True,
+                automatic_payment_methods={
+                    "enabled": True,
+                    "allow_redirects": "never"  # Disable redirect-based payment methods
+                },
                 metadata={
                     'flight_booking_id': flight_booking.id,
                     'booking_id': flight_booking.booking.id,
