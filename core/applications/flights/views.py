@@ -279,6 +279,8 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
             amadeus_booking_successful = self._create_amadeus_booking(flight_booking)
 
             if amadeus_booking_successful:
+                flight_booking.booking.status = 'COMPLETED'
+                flight_booking.booking.save()
                 return Response(
                     {
                         'booking': FlightBookingSerializer(flight_booking).data,
@@ -1355,37 +1357,26 @@ def stripe_webhook(request):
     # Handle specific event types
     if event.type == 'payment_intent.succeeded':
         payment_intent = event.data.object
-
-        # Retrieve booking reference from metadata
         booking_id = payment_intent.metadata.get('booking_id')
 
         if booking_id:
             try:
                 with transaction.atomic():
-                    # Find the booking
-                    booking = FlightBooking.objects.get(id=booking_id)
+                    booking = Booking.objects.get(id=booking_id)
+                    booking.status = 'COMPLETED'
+                    booking.save()
 
-                    # Update payment details
+                    # Create payment record
                     PaymentDetail.objects.create(
                         booking=booking,
-                        amount=payment_intent.amount / 100,  # Convert cents to dollars
-                        currency=payment_intent.currency.upper(),
+                        amount=payment_intent.amount / 100,
+                        currency=payment_intent.currency,
                         payment_method='STRIPE',
                         transaction_id=payment_intent.id,
                         payment_status='COMPLETED',
-                        additional_details={
-                            'flight_cost': payment_intent.metadata.get('flight_cost', 0),
-                            'service_fee': payment_intent.metadata.get('service_fee', 0),
-                            'service_fee_percentage': payment_intent.metadata.get('service_fee_percentage', 0)
-                        }
+                        metadata=payment_intent.metadata
                     )
-
-                    # Update booking status
-                    booking.booking_status = 'CONFIRMED'
-                    booking.save()
-
-            except FlightBooking.DoesNotExist:
-                # Log the error or handle accordingly
+            except Booking.DoesNotExist:
                 pass
 
     elif event.type == 'payment_intent.payment_failed':
