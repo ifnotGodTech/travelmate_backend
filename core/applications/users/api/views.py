@@ -800,6 +800,8 @@ class AppleLoginView(SocialLoginView):
         return super().post(request, *args, **kwargs)
 
 
+
+@extend_schema(tags=["Admins Management"])
 class AdminUserViewSet(ModelViewSet):
     queryset = User.objects.all()
     serializer_class = AdminUserSerializer
