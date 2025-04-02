@@ -735,44 +735,156 @@ class ProfileViewSet(ModelViewSet):
         return Response(serializer.data, status=status.HTTP_202_ACCEPTED)
 
 
+class FacebookLoginView(SocialLoginView):
+    """
+    Facebook OAuth Login View
 
-class GoogleLoginView(SocialLoginView):
-    adapter_class = GoogleOAuth2Adapter
+    This endpoint allows users to authenticate using a Facebook OAuth access token.
+    Users must first obtain an access token from Facebook by signing in via Facebook OAuth.
+    Once they receive a valid access token, they can send it to this API to authenticate.
+
+    If the token is valid, the API will return a Django authentication token, which can be
+    used for subsequent authenticated requests.
+    """
+
+    adapter_class = FacebookOAuth2Adapter
+
     @extend_schema(
-        summary="Google OAuth Login",
-        description="Authenticate using a Google OAuth access token",
+        summary="Facebook OAuth Login",
+        description="""
+        Authenticate users using Facebook OAuth.
+
+        **How it Works:**
+        1. The user selects "Sign in with Facebook" in the frontend application.
+        2. Facebook provides an access token upon successful authentication.
+        3. The frontend sends this access token to this endpoint.
+        4. The API verifies the token with Facebook and, if valid:
+            - Creates a user account (if they are new).
+            - Returns a Django authentication token for further API requests.
+
+        **Request Format:**
+        Send a `POST` request with a valid `access_token` obtained from Facebook.
+
+        **Example Request:**
+        ```json
+        {
+            "access_token": "EAAJZ..."
+        }
+        ```
+
+        **Response Format:**
+        If authentication is successful, the API returns an authentication token.
+
+        **Example Response:**
+        ```json
+        {
+            "key": "7f4e265c8f8c5e64db..."
+        }
+        ```
+        """,
         request={
             "application/json": {
                 "type": "object",
-                "properties": {"access_token": {"type": "string"}}
+                "properties": {
+                    "access_token": {
+                        "type": "string",
+                        "description": "Facebook OAuth access token obtained after successful login with Facebook."
+                    }
+                },
+                "required": ["access_token"]
             }
         },
         responses={
             200: {
                 "type": "object",
-                "properties": {"key": {"type": "string"}}
+                "properties": {
+                    "key": {
+                        "type": "string",
+                        "description": "Django authentication token to be used in future requests."
+                    }
+                }
+            },
+            400: {
+                "description": "Invalid access token or authentication failed."
             }
         },
     )
     def post(self, request, *args, **kwargs):
         return super().post(request, *args, **kwargs)
 
-class FacebookLoginView(SocialLoginView):
-    adapter_class = FacebookOAuth2Adapter
+
+
+class GoogleLoginView(SocialLoginView):
+    """
+    Google OAuth Login View
+
+    This endpoint allows users to authenticate using a Google OAuth access token.
+    Users must first obtain an access token from Google by signing in via Google OAuth.
+    Once they receive a valid access token, they can send it to this API to authenticate.
+
+    If the token is valid, the API will return a Django authentication token, which can be
+    used for subsequent authenticated requests.
+    """
+
+    adapter_class = GoogleOAuth2Adapter
 
     @extend_schema(
-        summary="Facebook OAuth Login",
-        description="Authenticate using a Facebook OAuth access token",
+        summary="Google OAuth Login",
+        description="""
+        Authenticate users using Google OAuth.
+
+        **How it Works:**
+        1. The user selects "Sign in with Google" in the frontend application.
+        2. Google provides an access token upon successful authentication.
+        3. The frontend sends this access token to this endpoint.
+        4. The API verifies the token with Google and, if valid:
+            - Creates a user account (if they are new).
+            - Returns a Django authentication token for further API requests.
+
+        **Request Format:**
+        Send a `POST` request with a valid `access_token` obtained from Google.
+
+        **Example Request:**
+        ```json
+        {
+            "access_token": "ya29.a0AfH6SM..."
+        }
+        ```
+
+        **Response Format:**
+        If authentication is successful, the API returns an authentication token.
+
+        **Example Response:**
+        ```json
+        {
+            "key": "7f4e265c8f8c5e64db..."
+        }
+        ```
+        """,
         request={
             "application/json": {
                 "type": "object",
-                "properties": {"access_token": {"type": "string"}}
+                "properties": {
+                    "access_token": {
+                        "type": "string",
+                        "description": "Google OAuth access token obtained after successful login with Google."
+                    }
+                },
+                "required": ["access_token"]
             }
         },
         responses={
             200: {
                 "type": "object",
-                "properties": {"key": {"type": "string"}}
+                "properties": {
+                    "key": {
+                        "type": "string",
+                        "description": "Django authentication token to be used in future requests."
+                    }
+                }
+            },
+            400: {
+                "description": "Invalid access token or authentication failed."
             }
         },
     )
@@ -781,27 +893,81 @@ class FacebookLoginView(SocialLoginView):
 
 
 class AppleLoginView(SocialLoginView):
+    """
+    Apple OAuth Login View
+
+    This endpoint allows users to authenticate using an Apple OAuth access token.
+    Users must first obtain an access token from Apple by signing in via "Sign in with Apple."
+    Once they receive a valid access token, they can send it to this API to authenticate.
+
+    If the token is valid, the API will return a Django authentication token, which can be
+    used for subsequent authenticated requests.
+    """
+
     adapter_class = AppleOAuth2Adapter
 
     @extend_schema(
         summary="Apple OAuth Login",
-        description="Authenticate using a Apple OAuth access token",
+        description="""
+        Authenticate users using Apple OAuth.
+
+        **How it Works:**
+        1. The user selects "Sign in with Apple" in the frontend application.
+        2. Apple provides an access token upon successful authentication.
+        3. The frontend sends this access token to this endpoint.
+        4. The API verifies the token with Apple and, if valid:
+            - Creates a user account (if they are new).
+            - Returns a Django authentication token for further API requests.
+
+        **Request Format:**
+        Send a `POST` request with a valid `access_token` obtained from Apple.
+
+        **Example Request:**
+        ```json
+        {
+            "access_token": "eyJraWQiOiJ..."
+        }
+        ```
+
+        **Response Format:**
+        If authentication is successful, the API returns an authentication token.
+
+        **Example Response:**
+        ```json
+        {
+            "key": "7f4e265c8f8c5e64db..."
+        }
+        ```
+        """,
         request={
             "application/json": {
                 "type": "object",
-                "properties": {"access_token": {"type": "string"}}
+                "properties": {
+                    "access_token": {
+                        "type": "string",
+                        "description": "Apple OAuth access token obtained after successful login with Apple."
+                    }
+                },
+                "required": ["access_token"]
             }
         },
         responses={
             200: {
                 "type": "object",
-                "properties": {"key": {"type": "string"}}
+                "properties": {
+                    "key": {
+                        "type": "string",
+                        "description": "Django authentication token to be used in future requests."
+                    }
+                }
+            },
+            400: {
+                "description": "Invalid access token or authentication failed."
             }
         },
     )
     def post(self, request, *args, **kwargs):
         return super().post(request, *args, **kwargs)
-
 
 
 @extend_schema(tags=["Admins Management"])
