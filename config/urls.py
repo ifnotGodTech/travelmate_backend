@@ -28,6 +28,7 @@ urlpatterns = [
     path("flights/", include("core.applications.flights.urls", namespace="flights")),
     path("cars/", include("core.applications.cars.urls", namespace="cars")),
 
+
     # Media files
     *static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT),
 ]
@@ -43,6 +44,7 @@ urlpatterns += [
     path("api/auth/", include("core.applications.users.api.jwt")),
     path("api/", include("core.applications.users.api.routers", namespace="users")),
     path("api/", include("core.applications.stay.api.stay_routers", namespace="stay")),
+    path("api/", include("core.applications.bookings.urls", namespace="bookings")),
     path("api/auth-token/", obtain_auth_token),
     path("api/schema/", SpectacularAPIView.as_view(), name="api-schema"),
     path(

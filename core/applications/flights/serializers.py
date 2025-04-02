@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .models import Passenger, FlightBooking, Flight, PassengerBooking, PaymentDetail
+from core.applications.stay.models import Booking
 from datetime import datetime
 from django.core.exceptions import ValidationError
 
@@ -20,14 +21,21 @@ class PassengerSerializer(serializers.ModelSerializer):
 class FlightSerializer(serializers.ModelSerializer):
     class Meta:
         model = Flight
-        exclude = ['booking']
+        exclude = ['flight_booking']
+        read_only_fields = ['created_at', 'updated_at']
 
 class PassengerBookingSerializer(serializers.ModelSerializer):
     passenger = PassengerSerializer()
 
     class Meta:
         model = PassengerBooking
-        exclude = ['booking']
+        exclude = ['flight_booking']
+
+class BookingSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Booking
+        fields = ['id', 'user', 'status', 'total_price', 'created_at', 'updated_at']
+        read_only_fields = ['created_at', 'updated_at']
 
 class PaymentDetailSerializer(serializers.ModelSerializer):
     class Meta:
@@ -35,14 +43,20 @@ class PaymentDetailSerializer(serializers.ModelSerializer):
         exclude = ['booking']
 
 class FlightBookingSerializer(serializers.ModelSerializer):
+    booking = BookingSerializer(read_only=True)
     flights = FlightSerializer(many=True, read_only=True)
     passenger_bookings = PassengerBookingSerializer(many=True, read_only=True)
-    payment = PaymentDetailSerializer(read_only=True)
+    payment_details = PaymentDetailSerializer(source='booking.payment_detail', read_only=True)
 
     class Meta:
         model = FlightBooking
-        fields = '__all__'
-        read_only_fields = ['booking_reference', 'user', 'created_at', 'updated_at']
+        fields = [
+            'id', 'booking', 'booking_reference', 'booking_type', 'currency',
+            'service_fee', 'base_flight_cost', 'admin_notes', 'cancelled_by',
+            'cancellation_date', 'cancellation_reason', 'flights',
+            'passenger_bookings', 'payment_details'
+        ]
+        read_only_fields = ['booking_reference', 'created_at', 'updated_at']
 
 # Input serializers for creating flight bookings
 class PassengerInputSerializer(serializers.ModelSerializer):
@@ -53,7 +67,7 @@ class PassengerInputSerializer(serializers.ModelSerializer):
 class FlightInputSerializer(serializers.ModelSerializer):
     class Meta:
         model = Flight
-        exclude = ['booking', 'id']
+        exclude = ['flight_booking', 'id', 'created_at', 'updated_at']
 
 class FlightBookingInputSerializer(serializers.Serializer):
     booking_type = serializers.ChoiceField(choices=FlightBooking.BOOKING_TYPE_CHOICES)
@@ -78,8 +92,6 @@ class FlightBookingInputSerializer(serializers.Serializer):
             raise serializers.ValidationError("Multi-city bookings must have at least two flight offers.")
 
         return data
-
-
 
 class FlightSearchSerializer(serializers.Serializer):
     origin = serializers.CharField(max_length=3)
@@ -111,13 +123,10 @@ class FlightSearchSerializer(serializers.Serializer):
 
         return data
 
-
 class FlightSegmentSerializer(serializers.Serializer):
     origin = serializers.CharField(max_length=3)
     destination = serializers.CharField(max_length=3)
     departure_date = serializers.DateField()
-
-
 
 class MultiCityFlightSearchSerializer(serializers.Serializer):
     segments = FlightSegmentSerializer(many=True, min_length=2)
@@ -155,16 +164,13 @@ class FlightOfferSerializer(serializers.Serializer):
     flight_offer_id = serializers.CharField()
     price = serializers.DecimalField(max_digits=10, decimal_places=2)
     currency = serializers.CharField(max_length=3)
-
-    # This would typically include the complete flight offer data from Amadeus
-    # but for simplicity, we're just including the ID and price
     flight_offer_data = serializers.JSONField()
 
 class BookingConfirmationSerializer(serializers.Serializer):
     """
     Serializer for booking confirmation with service fee details
     """
-    booking_reference = serializers.CharField()
+    booking_reference = serializers.CharField(max_length=100)
     booking_status = serializers.CharField()
     total_price = serializers.DecimalField(max_digits=10, decimal_places=2)
     base_flight_cost = serializers.DecimalField(max_digits=10, decimal_places=2)
@@ -175,9 +181,24 @@ class BookingConfirmationSerializer(serializers.Serializer):
     passengers = serializers.ListField(child=serializers.JSONField())
     payment_status = serializers.CharField()
 
-
 class PaymentInputSerializer(serializers.Serializer):
     payment_method_id = serializers.CharField(
         required=True,
         help_text="Stripe payment method ID"
     )
+
+class CancellationSerializer(serializers.Serializer):
+    """
+    Serializer for cancelling a booking
+    """
+    reason = serializers.CharField(required=False, allow_blank=True)
+
+class FlightOfferPricingSerializer(serializers.Serializer):
+    """
+    Serializer for flight offer pricing details
+    """
+    flight_offer_ids = serializers.ListField(
+        child=serializers.CharField(),
+        min_length=1
+    )
+    include_service_fee = serializers.BooleanField(default=True)
