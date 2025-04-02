@@ -6,6 +6,7 @@ from django.db.models import EmailField
 from django.db.models import BooleanField
 from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
+from django.conf import settings
 
 from core.helpers.enums import GenderChoice
 
@@ -65,3 +66,10 @@ class Profile(models.Model):
         _("Profile Picture"), upload_to="profile_pics/",
         blank=True, null=True
     )
+
+
+    @property
+    def get_profile_picture(self):
+        if self.profile_picture:
+            return self.profile_picture.url
+        return f'{settings.STATIC_URL}images/avatar.png'
