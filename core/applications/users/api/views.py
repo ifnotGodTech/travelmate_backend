@@ -41,7 +41,7 @@ from rest_framework.viewsets import ViewSet
 from core.applications.users.models import Profile, User
 from core.applications.users.token import default_token_generator
 from core.helpers.custom_exceptions import CustomError
-from core.applications.users.api.serializers import AdminRegistrationSerializer, AdminUserSerializer, CustomUserCreateSerializer, EmailSubmissionSerializer, PasswordRetypeSerializer, ProfileSerializers, UserSerializer, VerifyOTPSerializer
+from core.applications.users.api.serializers import AdminRegistrationSerializer, AdminUserDetailSerializer, AdminUserSerializer, CustomUserCreateSerializer, EmailSubmissionSerializer, OTPVerificationSerializer, PasswordRetypeSerializer, PasswordSetSerializer, ProfileSerializers, UserSerializer, VerifyOTPSerializer
 from core.helpers.authentication import CustomJWTAuthentication
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -53,8 +53,11 @@ from allauth.socialaccount.providers.apple.views import AppleOAuth2Adapter
 from django_filters.rest_framework import DjangoFilterBackend
 from core.applications.users.api.schemas import(
     submit_email_schema, verify_otp_schema, verify_admin_schema,
-    resend_otp_schema
+    resend_otp_schema, admin_list_user_schema, admin_deactivate_user_schema,
+    admin_export_user_schema, set_password_schema
 )
+from django.conf import settings as django_settings
+from django.db.models import Count
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +111,8 @@ class TokenObtainPairView(TokenViewBase):
 
 
 token_obtain_pair = TokenObtainPairView.as_view()
+
+
 
 
 class TokenObtainSlidingView(TokenViewBase):
@@ -169,11 +174,13 @@ class TokenBlacklistView(TokenViewBase):
 
 token_blacklist = TokenBlacklistView.as_view()
 
+
 @extend_schema(tags=["User Register with OTP"])
 class OTPRegistrationViewSet(ViewSet):
-    """Handles OTP-based registration and verification."""
+    """Handles OTP-based user registration in multiple steps."""
+
     permission_classes = [AllowAny]
-    OTP_EXPIRY = 600    # 10 minutes
+    OTP_EXPIRY = 600  # 10 minutes
     OTP_DIGITS = 4
     OTP_SECRET = "JBSWY3DPEHPK3PXP"
 
@@ -181,74 +188,84 @@ class OTPRegistrationViewSet(ViewSet):
         """Generates and caches a 4-digit OTP."""
         otp = pyotp.TOTP(self.OTP_SECRET, digits=self.OTP_DIGITS).now()
         cache.set(email, otp, timeout=self.OTP_EXPIRY)
-        logger.info(f"Generated OTP for {email}: {otp}")
-        logger.info(cache.get("test_key"), "<<<<<<<<<<<<<<<<>>>>>>>>>>>")
-        logger.info(f"OTP generated for {email}")
         return otp
 
     def send_otp_email(self, request, email, otp):
-        """Sends OTP via email."""
+        """Sends OTP via email (Placeholder)."""
         OTPRegistrationEmail(request, {"otp": otp}).send([email])
         logger.info(f"OTP email sent to {email}")
+
+    def validate_otp(self, email, otp):
+        """Validates OTP from cache."""
+        cached_otp = cache.get(email)
+        if cached_otp and cached_otp == otp:
+            cache.set(f"{email}_verified", True, timeout=self.OTP_EXPIRY)
+            cache.delete(email)
+            return True
+        return False
 
     def generate_tokens(self, user):
         """Generates JWT tokens."""
         refresh = RefreshToken.for_user(user)
         return {"refresh": str(refresh), "access": str(refresh.access_token)}
 
-    def validate_otp(self, email, otp):
-        """Validates OTP from cache."""
-        cached_otp = cache.get(email)
-        logger.info(f"Validating OTP for {email}: Received {otp}, Cached {cached_otp}")
-        if cached_otp == otp:
-            cache.delete(email)
-            return True
-        return False
-
     @submit_email_schema
     @action(detail=False, methods=["post"])
     def submit_email(self, request):
-        """Submits email to receive an OTP."""
         serializer = EmailSubmissionSerializer(data=request.data)
         if serializer.is_valid():
             email = serializer.validated_data["email"]
-            self.send_otp_email(request, email, self.generate_otp(email))
+            otp = self.generate_otp(email)
+            self.send_otp_email(request, email, otp)
             return Response({"message": "OTP sent to your email."}, status=status.HTTP_200_OK)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-    def register_user(self, request, serializer_class):
-        """Registers a user or admin after OTP validation."""
-        serializer = serializer_class(data=request.data)
-        if serializer.is_valid():
-            email, otp = serializer.validated_data["email"], serializer.validated_data["otp"].strip()
-            if self.validate_otp(email, otp):
-                user = serializer.save()
-                logger.info(f"Account created for {email}")
-                return Response({"message": "User created successfully.", **self.generate_tokens(user)}, status=status.HTTP_201_CREATED)
-            return Response({"error": "Invalid or expired OTP."}, status=status.HTTP_400_BAD_REQUEST)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     @verify_otp_schema
     @action(detail=False, methods=["post"])
-    def verify_otp_and_set_password(self, request):
-        """Verifies OTP, sets password, and logs in the user."""
-        return self.register_user(request, CustomUserCreateSerializer)
-
-    @verify_admin_schema
-    @action(detail=False, methods=["post"])
-    def verify_admin(self, request):
-        """Verifies OTP and registers an admin."""
-        return self.register_user(request, AdminRegistrationSerializer)
+    def verify_otp(self, request):
+        serializer = OTPVerificationSerializer(data=request.data)
+        if serializer.is_valid():
+            email, otp = serializer.validated_data["email"], serializer.validated_data["otp"]
+            if self.validate_otp(email, otp):
+                return Response({"message": "OTP verified. Proceed to set your password."}, status=status.HTTP_200_OK)
+            return Response({"error": "Invalid or expired OTP."}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     @resend_otp_schema
     @action(detail=False, methods=["post"])
     def resend_otp(self, request):
-        """Resends OTP to the user."""
+        """Allows users to request a new OTP."""
         serializer = EmailSubmissionSerializer(data=request.data)
         if serializer.is_valid():
             email = serializer.validated_data["email"]
-            self.send_otp_email(request, email, self.generate_otp(email))
-            return Response({"message": "New OTP sent to your email."}, status=status.HTTP_200_OK)
+
+            # Check if the email exists in the system (optional security check)
+            if not User.objects.filter(email=email).exists():
+                return Response({"error": "User not found with this email."}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Generate and send new OTP
+            otp = self.generate_otp(email)
+            self.send_otp_email(request, email, otp)
+
+            return Response({"message": "A new OTP has been sent to your email."}, status=status.HTTP_200_OK)
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @set_password_schema
+    @action(detail=False, methods=["post"])
+    def set_password(self, request):
+        serializer = PasswordSetSerializer(data=request.data)
+        if serializer.is_valid():
+            email = serializer.validated_data["email"]
+            if not cache.get(f"{email}_verified"):
+                return Response({"error": "OTP not verified or expired."}, status=status.HTTP_400_BAD_REQUEST)
+
+            user, created = User.objects.get_or_create(email=email)
+            user.set_password(serializer.validated_data["password"])
+            user.save()
+
+            tokens = self.generate_tokens(user)
+            return Response({"message": "Password set successfully.", **tokens}, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -971,36 +988,111 @@ class AppleLoginView(SocialLoginView):
 
 
 @extend_schema(tags=["Admins Management"])
-class AdminUserViewSet(ModelViewSet):
-    queryset = User.objects.all()
-    serializer_class = AdminUserSerializer
+# class AdminUserViewSet(ModelViewSet):
+#     queryset = User.objects.all()
+#     serializer_class = AdminUserSerializer
+#     permission_classes = [permissions.IsAdminUser]
+#     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+#     filterset_fields = ["is_active"]
+#     search_fields = ["email"]
+#     ordering_fields = ["date_joined"]
+
+#     def get_queryset(self):
+#         """
+#         Returns all users by default.
+#         If `booking_type` is provided in query params, filter users based on bookings.
+#         """
+#         queryset = super().get_queryset()
+#         booking_type = self.request.query_params.get("booking_type")
+
+#         if booking_type:
+#             filters = {
+#                 "flights": "flight_bookings__isnull",
+#                 "hotels": "hotel_bookings__isnull",
+#                 "cars": "car_bookings__isnull",
+#             }
+#             filter_condition = filters.get(booking_type)
+#             if filter_condition:
+#                 queryset = queryset.filter(**{filter_condition: False}).distinct()
+
+#         return queryset
+
+
+#     @action(detail=True, methods=["patch"], url_path="deactivate")
+#     def deactivate_user(self, request, pk=None):
+#         """
+#         Deactivate a user by setting is_active to False.
+#         """
+#         user = self.get_object()
+#         user.is_active = False
+#         user.save()
+#         return Response({"detail": "User has been deactivated"}, status=status.HTTP_200_OK)
+
+#     @action(detail=False, methods=["get"], url_path="export")
+#     def export_users(self, request):
+#         """
+#         Export users as a CSV file.
+#         """
+#         response = HttpResponse(content_type="text/csv")
+#         response["Content-Disposition"] = 'attachment; filename="users.csv"'
+
+#         writer = csv.writer(response)
+#         writer.writerow(["ID", "Email", "Username", "Is Active", "Date Joined"])
+
+#         users = self.get_queryset()
+#         for user in users:
+#             writer.writerow([user.id, user.email, user.username, user.is_active, user.date_joined])
+
+#         return response
+
+
+class AdminUserViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing admin users, including filtering, searching,
+    exporting user data, and retrieving booking history.
+    """
+    queryset = User.objects.all().prefetch_related("profile")
     permission_classes = [permissions.IsAdminUser]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ["is_active"]
-    search_fields = ["email"]
+    search_fields = ["email", "name"]
     ordering_fields = ["date_joined"]
+
+    def get_serializer_class(self):
+        """Return appropriate serializer for list and detail views."""
+        if self.action == "retrieve":
+            return AdminUserDetailSerializer
+        return AdminUserSerializer
 
     def get_queryset(self):
         """
         Returns all users by default.
-        If `booking_type` is provided in query params, filter users based on bookings.
+        If `booking_type` is provided in query params, filters users based on booking type.
         """
-        queryset = super().get_queryset()
+        queryset = super().get_queryset().annotate(
+            total_flight_bookings=Count("flight_bookings"),
+            total_car_bookings=Count("car_bookings"),
+        )
+
         booking_type = self.request.query_params.get("booking_type")
 
         if booking_type:
-            filters = {
-                "flights": "flight_bookings__isnull",
-                "hotels": "hotel_bookings__isnull",
-                "cars": "car_bookings__isnull",
-            }
-            filter_condition = filters.get(booking_type)
-            if filter_condition:
-                queryset = queryset.filter(**{filter_condition: False}).distinct()
+            if booking_type == "flights":
+                queryset = queryset.filter(flight_bookings__isnull=False).distinct()
+            elif booking_type == "cars":
+                queryset = queryset.filter(car_bookings__isnull=False).distinct()
 
         return queryset
 
+    @admin_list_user_schema
+    def list(self, request, *args, **kwargs):
+        """
+        Retrieves a list of users with profile details.
+        Supports filtering, searching, and ordering.
+        """
+        return super().list(request, *args, **kwargs)
 
+    @admin_deactivate_user_schema
     @action(detail=True, methods=["patch"], url_path="deactivate")
     def deactivate_user(self, request, pk=None):
         """
@@ -1011,19 +1103,27 @@ class AdminUserViewSet(ModelViewSet):
         user.save()
         return Response({"detail": "User has been deactivated"}, status=status.HTTP_200_OK)
 
+    @admin_export_user_schema
     @action(detail=False, methods=["get"], url_path="export")
     def export_users(self, request):
         """
-        Export users as a CSV file.
+        Export users as a CSV file including ID, Email, Name, Status, Date Joined, and Total Bookings.
         """
         response = HttpResponse(content_type="text/csv")
         response["Content-Disposition"] = 'attachment; filename="users.csv"'
 
         writer = csv.writer(response)
-        writer.writerow(["ID", "Email", "Username", "Is Active", "Date Joined"])
+        writer.writerow(["ID", "Email", "Name", "Is Active", "Date Joined", "Total Bookings"])
 
         users = self.get_queryset()
         for user in users:
-            writer.writerow([user.id, user.email, user.username, user.is_active, user.date_joined])
+            writer.writerow([
+                user.id,
+                user.email,
+                user.name,
+                user.is_active,
+                user.date_joined.strftime("%Y-%m-%d"),
+                user.total_bookings,
+            ])
 
         return response

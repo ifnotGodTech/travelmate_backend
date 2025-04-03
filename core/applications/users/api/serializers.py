@@ -6,7 +6,7 @@ from django.contrib.auth import user_logged_in
 from django.contrib.auth.models import update_last_login
 from django.contrib.auth.password_validation import validate_password
 from django.core import exceptions as django_exceptions
-from core.applications.cars.models import Booking
+from core.applications.cars.models import Booking, CarBooking
 from core.applications.flights.models import FlightBooking
 from djoser.compat import get_user_email
 from djoser.conf import settings
@@ -17,13 +17,14 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.settings import api_settings
 from django.core.cache import cache
+from django.conf import settings as django_settings
 
 from core.applications.users.managers import OTPManager
 from core.applications.users.models import Profile, User
 from core.applications.users.token import default_token_generator
 from core.helpers.custom_exceptions import CustomError
 from core.helpers.interface import BaseModelNoDefs
-from core.helpers.password_validator import validate_password_strength
+# from core.helpers.password_validator import validate_password_strength
 import logging
 from core.applications.users.email import ActivationEmail, ConfirmationEmail
 
@@ -87,6 +88,28 @@ class AdminRegistrationSerializer(CustomUserCreateSerializer):
 
         return user
 
+
+class OTPVerificationSerializer(serializers.Serializer):
+    """Serializer for verifying OTP."""
+    email = serializers.EmailField(required=True)
+    otp = serializers.CharField(required=True, max_length=4, min_length=4)
+
+
+class PasswordSetSerializer(serializers.Serializer):
+    """Serializer for setting password after OTP verification."""
+    email = serializers.EmailField(required=True)
+    password = serializers.CharField(
+        write_only=True,
+        min_length=8,
+        validators=[validate_password]  # Django's built-in password validators
+    )
+    def validate_email(self, email):
+        """Check if the email has completed OTP verification."""
+        if not cache.get(f"{email}_verified"):
+            raise serializers.ValidationError(
+                "OTP not verified or expired."
+            )
+        return email
 
 class OSNameSchema(BaseModelNoDefs):
     Android: Literal["Android"] | None = None
@@ -469,31 +492,159 @@ class ProfileSerializers:
 
 
 
+# class AdminUserSerializer(serializers.ModelSerializer):
+#     flight_bookings = serializers.SerializerMethodField()
+#     # hotel_bookings = serializers.SerializerMethodField()
+#     car_bookings = serializers.SerializerMethodField()
+
+#     class Meta:
+#         model = User
+#         fields = (
+#             "id",
+#             "email",
+#             "name",
+#             "is_active",
+#             "is_staff",
+#             "is_superuser",
+#             "flight_bookings",
+#             # "hotel_bookings",
+#             "car_bookings",
+#         )
+
+#     def get_flight_bookings(self, obj):
+#         return FlightBooking.objects.filter(user=obj).values(
+#             "id",
+#             "service_fee",
+#         )
+#     def get_car_bookings(self, obj):
+#         return Booking.objects.filter(user=obj).values(
+#             "id"
+#         )
+
+
+# class AdminUserSerializer(serializers.ModelSerializer):
+#     profile_picture = serializers.SerializerMethodField()
+#     date_created = serializers.DateTimeField(source="date_joined", format="%Y-%m-%d", read_only=True)
+#     total_bookings = serializers.SerializerMethodField()
+#     flight_bookings = serializers.SerializerMethodField()
+#     car_bookings = serializers.SerializerMethodField()
+
+#     class Meta:
+#         model = User
+#         fields = (
+#             "id",
+#             "email",
+#             "name",
+#             "is_active",
+#             "is_staff",
+#             "is_superuser",
+#             "profile_picture",
+#             "date_created",
+#             "total_bookings",
+#             "flight_bookings",
+#             "car_bookings",
+#         )
+
+#     def get_profile_picture(self, obj):
+#         """Get user's profile picture URL or default avatar."""
+#         if hasattr(obj, "profile") and obj.profile.profile_pics:
+#             return obj.profile.profile_pics.url
+#         return f"{settings.STATIC_URL}images/avatar.png"
+
+#     def get_total_bookings(self, obj):
+#         """Count total bookings associated with the user."""
+#         return Booking.objects.filter(user=obj).count()
+
+#     def get_flight_bookings(self, obj):
+#         """Retrieve flight booking history."""
+#         return FlightBooking.objects.filter(booking__user=obj).values(
+#             "id",
+#             "booking_reference",
+#             "booking_type",
+#             "currency",
+#             "service_fee",
+#             "base_flight_cost",
+#         )
+
+#     def get_car_bookings(self, obj):
+#         """Retrieve car booking history."""
+#         return CarBooking.objects.filter(booking__user=obj).values(
+#             "id",
+#             "booking_reference",
+#             "pickup_location__name",
+#             "dropoff_location__name",
+#             "pickup_date",
+#             "dropoff_date",
+#             "base_transfer_cost",
+#             "service_fee",
+#         )
+
+
 class AdminUserSerializer(serializers.ModelSerializer):
-    flight_bookings = serializers.SerializerMethodField()
-    # hotel_bookings = serializers.SerializerMethodField()
-    car_bookings = serializers.SerializerMethodField()
+    """
+    Serializer for listing users.
+    Includes profile picture, name, email, date created, and total bookings.
+    """
+    profile_picture = serializers.SerializerMethodField()
+    first_name = serializers.CharField(source="profile.first_name", read_only=True)
+    last_name = serializers.CharField(source="profile.last_name", read_only=True)
+    date_created = serializers.DateTimeField(source="date_joined", format="%Y-%m-%d", read_only=True)
+    total_bookings = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = User
         fields = (
-            "id",
-            "email",
-            "name",
-            "is_active",
-            "is_staff",
-            "is_superuser",
-            "flight_bookings",
-            # "hotel_bookings",
-            "car_bookings",
+            "id", "email", "first_name", "last_name", "name",
+            "profile_picture", "date_created", "total_bookings"
         )
 
+    def get_profile_picture(self, obj):
+        """Retrieve the user's profile picture or default avatar."""
+        profile = getattr(obj, "profile", None)
+        if profile and profile.profile_pics:
+            return profile.profile_pics.url
+        return f"{django_settings.STATIC_URL}images/avatar.png"
+
+    def get_first_name(self, obj):
+        """Retrieve the first name from the profile model, handle if profile doesn't exist."""
+        return obj.profile.first_name if hasattr(obj, "profile") and obj.profile else ""
+
+    def get_last_name(self, obj):
+        """Retrieve the last name from the profile model, handle if profile doesn't exist."""
+        return obj.profile.last_name if hasattr(obj, "profile") and obj.profile else ""
+
+
+class AdminUserDetailSerializer(AdminUserSerializer):
+    """
+    Serializer for retrieving detailed user information,
+    including booking histories (flights, cars, and hotels).
+    """
+    flight_bookings = serializers.SerializerMethodField()
+    car_bookings = serializers.SerializerMethodField()
+
+    class Meta(AdminUserSerializer.Meta):
+        fields = AdminUserSerializer.Meta.fields + ("flight_bookings", "car_bookings")
+
     def get_flight_bookings(self, obj):
-        return FlightBooking.objects.filter(user=obj).values(
+        """Retrieve flight booking history."""
+        return FlightBooking.objects.filter(booking__user=obj).values(
             "id",
+            "booking_reference",
+            "booking_type",
+            "currency",
             "service_fee",
+            "base_flight_cost",
         )
+
     def get_car_bookings(self, obj):
-        return Booking.objects.filter(user=obj).values(
-            "id"
+        """Retrieve car booking history."""
+        return CarBooking.objects.filter(booking__user=obj).values(
+            "id",
+            "booking_reference",
+            "pickup_location__name",
+            "dropoff_location__name",
+            "pickup_date",
+            "dropoff_date",
+            "base_transfer_cost",
+            "service_fee",
         )
