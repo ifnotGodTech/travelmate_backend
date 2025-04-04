@@ -9,6 +9,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAdminUser
+from .schemas import apply_unified_booking_schema
 from django.utils import timezone
 import stripe
 from django.conf import settings
@@ -17,7 +18,7 @@ from core.applications.flights.models import Flight, FlightBooking, PassengerBoo
 from core.applications.cars.models import CarBooking, Payment, StatusHistory
 
 
-
+@apply_unified_booking_schema
 class UnifiedBookingAdminViewSet(viewsets.ViewSet):
     """
     Admin-only operations for managing both car and flight bookings
@@ -110,6 +111,35 @@ class UnifiedBookingAdminViewSet(viewsets.ViewSet):
                 result.append(booking_data)
             except FlightBooking.DoesNotExist:
                 pass
+
+             # Check if it's a Hotel booking
+            # try:
+            #     hotel_booking = HotelBooking.objects.get(booking=booking)
+            #     if booking_type and booking_type.lower() != 'hotel':
+            #         continue  # Skip if filtering for another type
+
+            #     booking_data['booking_type'] = 'hotel'
+            #     booking_data['specific_id'] = hotel_booking.id
+
+            #     # Add hotel details
+            #     booking_data['details'] = {
+            #         'hotel_name': hotel_booking.hotel_name,
+            #         'hotel_id': hotel_booking.hotel_id,
+            #         'check_in': hotel_booking.check_in_date,
+            #         'check_out': hotel_booking.check_out_date,
+            #         'guests': hotel_booking.num_guests,
+            #         'room_type': hotel_booking.room_type,
+            #     }
+
+            #     # Get payment details if available
+            #     # Assuming you have a PaymentDetail model for hotel bookings similar to flights
+            #     payment = PaymentDetail.objects.filter(booking=booking, payment_status='COMPLETED').first()
+            #     if payment:
+            #         booking_data['total_amount'] = payment.amount
+
+            #     result.append(booking_data)
+            # except HotelBooking.DoesNotExist:
+            #     pass
 
         return Response(result, status=status.HTTP_200_OK)
 

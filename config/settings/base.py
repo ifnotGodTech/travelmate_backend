@@ -97,6 +97,7 @@ LOCAL_APPS = [
     "core.applications.flights",
     "core.applications.cars",
     "core.applications.bookings",
+    "core.applications.faq",
     # Your stuff: custom apps go here
 ]
 # https://docs.djangoproject.com/en/dev/ref/settings/#installed-apps
