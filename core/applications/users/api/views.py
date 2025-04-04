@@ -236,28 +236,23 @@ class TokenBlacklistView(TokenViewBase):
 token_blacklist = TokenBlacklistView.as_view()
 
 
-@extend_schema(tags=["User Register with OTP"])
-class OTPRegistrationViewSet(ViewSet):
-    """Handles OTP-based user registration in multiple steps."""
-
+class BaseOTPRegistrationViewSet(ViewSet):
     permission_classes = [AllowAny]
     OTP_EXPIRY = 600  # 10 minutes
     OTP_DIGITS = 4
     OTP_SECRET = "JBSWY3DPEHPK3PXP"
+    is_admin = False  # to be overridden by AdminRegistrationViewSet
 
     def generate_otp(self, email):
-        """Generates and caches a 4-digit OTP."""
         otp = pyotp.TOTP(self.OTP_SECRET, digits=self.OTP_DIGITS).now()
         cache.set(email, otp, timeout=self.OTP_EXPIRY)
         return otp
 
     def send_otp_email(self, request, email, otp):
-        """Sends OTP via email (Placeholder)."""
         OTPRegistrationEmail(request, {"otp": otp}).send([email])
         logger.info(f"OTP email sent to {email}")
 
     def validate_otp(self, email, otp):
-        """Validates OTP from cache."""
         cached_otp = cache.get(email)
         if cached_otp and cached_otp == otp:
             cache.set(f"{email}_verified", True, timeout=self.OTP_EXPIRY)
@@ -266,7 +261,6 @@ class OTPRegistrationViewSet(ViewSet):
         return False
 
     def generate_tokens(self, user):
-        """Generates JWT tokens."""
         refresh = RefreshToken.for_user(user)
         return {"refresh": str(refresh), "access": str(refresh.access_token)}
 
@@ -276,9 +270,17 @@ class OTPRegistrationViewSet(ViewSet):
         serializer = EmailSubmissionSerializer(data=request.data)
         if serializer.is_valid():
             email = serializer.validated_data["email"]
+
+            if User.objects.filter(email=email).exists():
+                return Response(
+                    {"message": "A user with this email is already registered."},
+                    status=status.HTTP_200_OK
+                )
+
             otp = self.generate_otp(email)
             self.send_otp_email(request, email, otp)
             return Response({"message": "OTP sent to your email."}, status=status.HTTP_200_OK)
+
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     @verify_otp_schema
@@ -286,28 +288,31 @@ class OTPRegistrationViewSet(ViewSet):
     def verify_otp(self, request):
         serializer = OTPVerificationSerializer(data=request.data)
         if serializer.is_valid():
-            email, otp = serializer.validated_data["email"], serializer.validated_data["otp"]
+            email = serializer.validated_data["email"]
+            otp = serializer.validated_data["otp"]
+
             if self.validate_otp(email, otp):
                 return Response({"message": "OTP verified. Proceed to set your password."}, status=status.HTTP_200_OK)
+
             return Response({"error": "Invalid or expired OTP."}, status=status.HTTP_400_BAD_REQUEST)
+
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     @resend_otp_schema
     @action(detail=False, methods=["post"])
     def resend_otp(self, request):
-        """Allows users to request a new OTP."""
         serializer = EmailSubmissionSerializer(data=request.data)
         if serializer.is_valid():
             email = serializer.validated_data["email"]
 
-            # Check if the email exists in the system (optional security check)
             if not User.objects.filter(email=email).exists():
-                return Response({"error": "User not found with this email."}, status=status.HTTP_400_BAD_REQUEST)
+                return Response(
+                    {"error": "User not found with this email."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
-            # Generate and send new OTP
             otp = self.generate_otp(email)
             self.send_otp_email(request, email, otp)
-
             return Response({"message": "A new OTP has been sent to your email."}, status=status.HTTP_200_OK)
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -318,16 +323,44 @@ class OTPRegistrationViewSet(ViewSet):
         serializer = PasswordSetSerializer(data=request.data)
         if serializer.is_valid():
             email = serializer.validated_data["email"]
+
             if not cache.get(f"{email}_verified"):
                 return Response({"error": "OTP not verified or expired."}, status=status.HTTP_400_BAD_REQUEST)
 
             user, created = User.objects.get_or_create(email=email)
             user.set_password(serializer.validated_data["password"])
+
+            if self.is_admin:
+                user.is_staff = True
+                user.is_admin = True
+                user.is_superuser = True
+
             user.save()
+            cache.delete(f"{email}_verified")
 
             tokens = self.generate_tokens(user)
-            return Response({"message": "Password set successfully.", **tokens}, status=status.HTTP_201_CREATED)
+            return Response(
+                {
+                    "message": "Admin account created successfully." if self.is_admin else "Password set successfully.",
+                    "tokens": tokens,
+                },
+                status=status.HTTP_201_CREATED,
+            )
+
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+
+@extend_schema(tags=["User Register with OTP"])
+class UserRegistrationViewSet(BaseOTPRegistrationViewSet):
+    """Handles OTP-based user registration."""
+    is_admin = False
+
+
+@extend_schema(tags=["Admin Register with OTP"])
+class AdminRegistrationViewSet(BaseOTPRegistrationViewSet):
+    """Handles OTP-based admin registration."""
+    is_admin = True
 
 
 @extend_schema(tags=["User"])
