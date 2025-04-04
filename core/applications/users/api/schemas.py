@@ -3,6 +3,64 @@ from drf_spectacular.utils import extend_schema
 from drf_spectacular.utils import OpenApiParameter, OpenApiExample, OpenApiTypes, OpenApiResponse
 
 
+login_validate_email_schema = extend_schema(
+    summary="Validate Email",
+    description="Step 1 of 2-step login: Validates whether the provided email exists in the system.",
+    request={
+        "application/json": {
+            "type": "object",
+            "properties": {
+                "email": {"type": "string", "format": "email", "example": "user@example.com"}
+            },
+            "required": ["email"]
+        }
+    },
+    responses={
+        200: OpenApiExample(
+            name="Email Found",
+            value={"detail": "Email exists."},
+            response_only=True
+        ),
+        400: OpenApiExample(
+            name="Email Not Found",
+            value={"detail": "Email not found."},
+            response_only=True
+        )
+    }
+)
+
+
+login_validate_password_schema = extend_schema(
+    summary="Validate Password and Obtain JWT Tokens",
+    description="Step 2 of 2-step login: Validates email and password, and returns access and refresh tokens.",
+    request={
+        "application/json": {
+            "type": "object",
+            "properties": {
+                "email": {"type": "string", "format": "email", "example": "user@example.com"},
+                "password": {"type": "string", "format": "password", "example": "strong_password123"}
+            },
+            "required": ["email", "password"]
+        }
+    },
+    responses={
+        200: OpenApiExample(
+            name="Successful Login",
+            value={
+                "access": "eyJ0eXAiOiJKV1QiLCJhbGciOi...",
+                "refresh": "eyJ0eXAiOiJKV1QiLCJhbGciOi..."
+            },
+            response_only=True
+        ),
+        400: OpenApiExample(
+            name="Invalid Credentials",
+            value={"detail": "Invalid credentials."},
+            response_only=True
+        )
+    }
+)
+
+
 submit_email_schema = extend_schema(
         summary="Step 1: Submit Email to Receive OTP",
         description="User submits their email to receive an OTP for registration.",

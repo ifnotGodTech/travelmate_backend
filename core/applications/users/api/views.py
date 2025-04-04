@@ -54,10 +54,12 @@ from django_filters.rest_framework import DjangoFilterBackend
 from core.applications.users.api.schemas import(
     submit_email_schema, verify_otp_schema, verify_admin_schema,
     resend_otp_schema, admin_list_user_schema, admin_deactivate_user_schema,
-    admin_export_user_schema, set_password_schema
+    admin_export_user_schema, set_password_schema, login_validate_email_schema,
+    login_validate_password_schema
 )
 from django.conf import settings as django_settings
 from django.db.models import Count
+from rest_framework.views import APIView
 
 logger = logging.getLogger(__name__)
 
@@ -101,17 +103,76 @@ class TokenViewBase(generics.GenericAPIView):
         return Response(serializer.validated_data, status=status.HTTP_200_OK)
 
 
-class TokenObtainPairView(TokenViewBase):
+# class TokenObtainPairView(TokenViewBase):
+#     """
+#     Takes a set of user credentials and returns an access and refresh JSON web
+#     token pair to prove the authentication of those credentials.
+#     """
+
+#     _serializer_class = api_settings.TOKEN_OBTAIN_SERIALIZER
+
+
+# token_obtain_pair = TokenObtainPairView.as_view()
+
+class ValidateEmailView(APIView):
+    permission_classes = [AllowAny]
+
+
+    @login_validate_email_schema
+    def post(self, request):
+        email = request.data.get("email")
+        if not email:
+            return Response(
+                {"detail": "Email is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if User.objects.filter(email=email).exists():
+            return Response(
+                {"detail": "Email exists."},
+                status=status.HTTP_200_OK
+            )
+
+        return Response(
+            {"detail": "Email not found."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+
+class ValidatePasswordView(APIView):
     """
-    Takes a set of user credentials and returns an access and refresh JSON web
-    token pair to prove the authentication of those credentials.
+    Validates the email and password, and returns access/refresh tokens using
+    the same serializer used by TokenObtainPairView.
     """
+    permission_classes = [AllowAny]
+    def get_serializer_class(self):
+        """
+        Resolves the TOKEN_OBTAIN_SERIALIZER setting,
+        whether it's a class or a string path.
+        """
+        serializer = api_settings.TOKEN_OBTAIN_SERIALIZER
+        if isinstance(serializer, str):
+            return import_string(serializer)
+        return serializer
 
-    _serializer_class = api_settings.TOKEN_OBTAIN_SERIALIZER
+    @login_validate_password_schema
+    def post(self, request, *args, **kwargs):
+        serializer_class = self.get_serializer_class()
+        serializer = serializer_class(
+            data=request.data, context={'request': request}
+        )
+        try:
+            serializer.is_valid(raise_exception=True)
+        except Exception:
+            return Response(
+                {
+                    "detail": "The password you entered doesn't match our records. "
+                              "Try again or click on 'Forgot password'."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-
-token_obtain_pair = TokenObtainPairView.as_view()
-
+        return Response(serializer.validated_data, status=status.HTTP_200_OK)
 
 
 
