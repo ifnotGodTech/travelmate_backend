@@ -274,7 +274,7 @@ class BaseOTPRegistrationViewSet(ViewSet):
             if User.objects.filter(email=email).exists():
                 return Response(
                     {"message": "A user with this email is already registered."},
-                    status=status.HTTP_200_OK
+                    status=status.HTTP_307_TEMPORARY_REDIRECT
                 )
 
             otp = self.generate_otp(email)
