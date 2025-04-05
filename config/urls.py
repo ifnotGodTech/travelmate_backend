@@ -27,6 +27,7 @@ urlpatterns = [
     # Your stuff: custom urls includes go here
     path("flights/", include("core.applications.flights.urls", namespace="flights")),
     path("cars/", include("core.applications.cars.urls", namespace="cars")),
+    path("", include("core.applications.faq.urls", namespace="faq")),
 
 
     # Media files
