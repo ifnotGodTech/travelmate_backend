@@ -13,17 +13,73 @@ from .schemas import apply_unified_booking_schema
 from django.utils import timezone
 import stripe
 from django.conf import settings
+from drf_spectacular.utils import extend_schema, OpenApiParameter, extend_schema_view
+from drf_spectacular.types import OpenApiTypes
 
 from core.applications.flights.models import Flight, FlightBooking, PassengerBooking, PaymentDetail
 from core.applications.cars.models import CarBooking, Payment, StatusHistory
 
 
+
+@extend_schema_view(
+    list=extend_schema(
+        description="List all bookings with filtering options for date range and booking type",
+        parameters=[
+            OpenApiParameter(
+                name='start_date',
+                type=OpenApiTypes.DATE,
+                location=OpenApiParameter.QUERY,
+                description='Filter bookings created on or after this date',
+                required=False
+            ),
+            OpenApiParameter(
+                name='end_date',
+                type=OpenApiTypes.DATE,
+                location=OpenApiParameter.QUERY,
+                description='Filter bookings created on or before this date',
+                required=False
+            ),
+            OpenApiParameter(
+                name='type',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description='Filter by booking type (car, flight)',
+                required=False,
+                enum=['car', 'flight']
+            ),
+            OpenApiParameter(
+                name='status',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description='Filter by booking status',
+                required=False
+            ),
+        ]
+    ),
+    retrieve=extend_schema(
+        description="Get detailed booking information for any booking type",
+        parameters=[
+            OpenApiParameter(
+                name='pk',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.PATH,
+                description='ID of the booking to retrieve',
+                required=True
+            )
+        ]
+    )
+)
 @apply_unified_booking_schema
 class UnifiedBookingAdminViewSet(viewsets.ViewSet):
     """
     Admin-only operations for managing both car and flight bookings
     """
+    lookup_field = 'pk'
+    lookup_url_kwarg = 'pk'
     permission_classes = [IsAdminUser]
+
+    queryset = Booking.objects.all()
+
 
     def list(self, request):
         """
@@ -143,6 +199,17 @@ class UnifiedBookingAdminViewSet(viewsets.ViewSet):
 
         return Response(result, status=status.HTTP_200_OK)
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='pk',
+                description='Primary key of the booking',
+                required=True,
+                type=int,
+            )
+        ]
+    )
+
     def retrieve(self, request, pk=None):
         """
         Get detailed booking information for any booking type
@@ -166,6 +233,18 @@ class UnifiedBookingAdminViewSet(viewsets.ViewSet):
                 {"error": "Booking not found"},
                 status=status.HTTP_404_NOT_FOUND
             )
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='pk',
+                description='Booking ID',
+                required=True,
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.PATH
+            )
+        ]
+    )
 
     @action(detail=True, methods=['patch'])
     def update_booking(self, request, pk=None):
@@ -191,6 +270,19 @@ class UnifiedBookingAdminViewSet(viewsets.ViewSet):
                 {"error": "Booking not found"},
                 status=status.HTTP_404_NOT_FOUND
             )
+
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='pk',
+                description='Booking ID',
+                required=True,
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.PATH
+            )
+        ]
+    )
 
     @action(detail=True, methods=['post'])
     def cancel_booking(self, request, pk=None):
@@ -801,6 +893,19 @@ class UnifiedBookingAdminViewSet(viewsets.ViewSet):
             booking_type=booking_type,
             field_changes=field_changes or {}
         )
+
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='pk',
+                description='Booking ID',
+                required=True,
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.PATH
+            )
+        ]
+    )
 
     @action(detail=True, methods=['get'])
     def history(self, request, pk=None):

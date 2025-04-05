@@ -7,6 +7,8 @@ from datetime import datetime
 from rest_framework.permissions import IsAdminUser
 from django.utils import timezone
 from decimal import Decimal, ROUND_HALF_UP
+from drf_spectacular.utils import extend_schema, OpenApiExample, OpenApiParameter
+from drf_spectacular.types import OpenApiTypes
 import stripe
 from django.conf import settings
 from rest_framework.exceptions import APIException
@@ -16,7 +18,7 @@ from .utils import AmadeusService
 from .models import CarBooking, Location, Car, Booking, Payment, CarCategory, CarCompany, StatusHistory, CarServiceFee
 from .serializers import (
     CarBookingSerializer, LocationSerializer, CarSerializer,
-    PaymentSerializer, CarCategorySerializer, CarCompanySerializer, CarServiceFeeSerializer
+    PaymentSerializer, CarCategorySerializer, CarCompanySerializer, CarServiceFeeSerializer, TransferSearchSerializer
 )
 
 from .car_schemas import (
@@ -161,6 +163,8 @@ class CarCompanyViewSet(viewsets.ModelViewSet):
 
 @transfer_search_schema
 class TransferSearchViewSet(viewsets.ViewSet):
+    serializer_class = TransferSearchSerializer
+
     @action(detail=False, methods=['post'])
     def search(self, request):
         """

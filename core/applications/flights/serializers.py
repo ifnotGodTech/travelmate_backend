@@ -1,3 +1,4 @@
+from core.helpers.enums import FlightBookingTypeChoice
 from rest_framework import serializers
 from .models import Passenger, FlightBooking, Flight, PassengerBooking, PaymentDetail
 from core.applications.stay.models import Booking
@@ -70,7 +71,7 @@ class FlightInputSerializer(serializers.ModelSerializer):
         exclude = ['flight_booking', 'id', 'created_at', 'updated_at']
 
 class FlightBookingInputSerializer(serializers.Serializer):
-    booking_type = serializers.ChoiceField(choices=FlightBooking.BOOKING_TYPE_CHOICES)
+    booking_type = serializers.ChoiceField(choices=FlightBookingTypeChoice.choices)
     flight_offer_ids = serializers.ListField(
         child=serializers.CharField(),
         min_length=1

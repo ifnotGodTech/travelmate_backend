@@ -1,6 +1,7 @@
 # serializers.py
 from rest_framework import serializers
 from decimal import Decimal, ROUND_HALF_UP
+from drf_spectacular.utils import extend_schema_field
 from .models import CarServiceFee, Location, Car, CarBooking, Payment, CarCategory, CarCompany, StatusHistory
 from core.applications.stay.models import Booking
 from core.applications.users.models import User
@@ -89,6 +90,7 @@ class CarBookingSerializer(serializers.ModelSerializer):
             'transfer_id': {'required': False},
         }
 
+    @extend_schema_field(str)
     def get_status_history(self, obj):
         """
         Get the status history for the related Booking
@@ -185,6 +187,7 @@ class PaymentSerializer(serializers.ModelSerializer):
             'additional_details'
         )
 
+    @extend_schema_field(str)
     def get_booking_details(self, obj):
         """
         Get the booking details including car booking information
@@ -215,3 +218,8 @@ class PaymentSerializer(serializers.ModelSerializer):
             pass
 
         return booking_data
+
+
+class TransferSearchSerializer(serializers.Serializer):
+    """Empty serializer just to satisfy the schema generation"""
+    pass
