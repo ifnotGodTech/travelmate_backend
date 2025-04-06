@@ -57,6 +57,14 @@ class CarBookingSerializer(serializers.ModelSerializer):
     total_price = serializers.DecimalField(
         max_digits=10, decimal_places=2, required=False, write_only=True
     )
+    customer_first_name = serializers.CharField(required=False)
+    customer_last_name = serializers.CharField(required=False)
+    customer_title = serializers.CharField(required=False, allow_blank=True)
+    customer_email = serializers.EmailField(required=False)
+    customer_phone = serializers.CharField(required=False)
+
+    # Add a nested customer field for more structured input
+    customer = serializers.JSONField(required=False, write_only=True)
 
     class Meta:
         model = CarBooking
@@ -72,7 +80,10 @@ class CarBookingSerializer(serializers.ModelSerializer):
             'amadeus_booking_reference',
             'base_transfer_cost', 'service_fee',
             'currency', 'transfer_id',
-            'status_history'
+            'status_history',
+            'customer_first_name', 'customer_last_name', 'customer_title',
+            'customer_email', 'customer_phone',
+            'customer'
         ]
         extra_kwargs = {
             'pickup_date': {'required': False, 'allow_null': True},
@@ -104,12 +115,31 @@ class CarBookingSerializer(serializers.ModelSerializer):
         """
         # For transfer bookings, check if transfer_id is provided
         if 'transfer_id' in data:
-            # You can add any additional validation specific to transfer bookings here
+            # Perform validation on transfer_id if needed
             pass
 
         # Add default values if needed
         if 'status' not in data:
             data['status'] = 'PENDING'
+
+        # Handle nested customer data if provided
+        if 'customer' in data:
+            customer = data.pop('customer')
+            contacts = customer.get('contacts', {})
+
+            # Map nested structure to flat fields
+            data['customer_first_name'] = customer.get('firstName')
+            data['customer_last_name'] = customer.get('lastName')
+            data['customer_title'] = customer.get('title', '')
+            data['customer_email'] = contacts.get('email')
+            data['customer_phone'] = contacts.get('phoneNumber')
+
+            # Validate required fields
+            if not data['customer_first_name'] or not data['customer_last_name']:
+                raise serializers.ValidationError({'customer': 'First name and last name are required'})
+
+            if not data['customer_email'] or not data['customer_phone']:
+                raise serializers.ValidationError({'contacts': 'Email and phone number are required'})
 
         return data
 

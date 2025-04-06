@@ -327,6 +327,26 @@ class CarBookingViewSet(viewsets.ModelViewSet):
             cache_key = f"transfer_details:{transfer_id}"
             transfer_details = cache.get(cache_key)
 
+            # Extract customer details from request
+            customer_details = request.data.get('customer', {})
+
+            # Validate required customer fields
+            required_fields = ['firstName', 'lastName', 'contacts']
+            for field in required_fields:
+                if field not in customer_details:
+                    raise TransferBookingError(
+                        detail=f'Missing required customer field: {field}',
+                        code=status.HTTP_400_BAD_REQUEST
+                    )
+
+            # Further validation for contacts
+            contacts = customer_details.get('contacts', {})
+            if not contacts.get('email') or not contacts.get('phoneNumber'):
+                raise TransferBookingError(
+                    detail='Email and phone number are required',
+                    code=status.HTTP_400_BAD_REQUEST
+                )
+
             # Logging for debugging
             logger.info(f"Transfer ID: {transfer_id}")
             logger.info(f"Transfer details: {transfer_details}")
@@ -445,7 +465,12 @@ class CarBookingViewSet(viewsets.ModelViewSet):
                 'base_transfer_cost': base_price,
                 'service_fee': service_fee,
                 'booking_reference': get_random_string(10).upper(),
-                'currency': price_info.get('currency', 'EUR')
+                'currency': price_info.get('currency', 'EUR'),
+                'customer_first_name': customer_details.get('firstName'),
+                'customer_last_name': customer_details.get('lastName'),
+                'customer_title': customer_details.get('title', ''),
+                'customer_email': contacts.get('email'),
+                'customer_phone': contacts.get('phoneNumber')
             }
 
             # Validate and save booking using our new serializer
@@ -607,27 +632,40 @@ class CarBookingViewSet(viewsets.ModelViewSet):
                 logger.error(f"No transfer details found for transfer_id: {car_booking.transfer_id}")
                 return False
 
+            # Get location objects from database
+            pickup_location = Location.objects.get(id=car_booking.pickup_location_id)
+            dropoff_location = Location.objects.get(id=car_booking.dropoff_location_id)
+
             # Prepare payload for Amadeus API
             amadeus_payload = {
                 "data": {
                     "type": "transferBooking",
                     "transferId": car_booking.transfer_id,
                     "customer": {
-                        "firstName": booking.user.first_name or "Unknown",
-                        "lastName": booking.user.last_name or "Unknown",
-                        "email": booking.user.email,
-                        "phone": "N/A",
-                        "countryCode": "US"  # Should be configurable
-                    },
+                                    "firstName": car_booking.customer_first_name,
+                                    "lastName": car_booking.customer_last_name,
+                                    "title": car_booking.customer_title,
+                                    "email": car_booking.customer_email,
+                                    "phone": car_booking.customer_phone,
+                                    "countryCode": pickup_location.country or "US"
+                                },
                     "pickup": {
-                        "locationId": transfer_details.get('start_location', {}).get('code', ''),
+                        "locationId": pickup_location.code,
                         "date": car_booking.pickup_date.strftime('%Y-%m-%d'),
                         "time": car_booking.pickup_time.strftime('%H:%M'),
                         "address": {
-                            "line1": transfer_details.get('start_location', {}).get('address', 'Unknown Address'),
-                            "city": transfer_details.get('start_location', {}).get('city', 'Unknown City'),
-                            "postalCode": "Unknown",
-                            "country": transfer_details.get('start_location', {}).get('country', 'Unknown'),
+                            "line1": pickup_location.address or transfer_details.get('start_location', {}).get('address', ''),
+                            "city": pickup_location.city,
+                            "postalCode": transfer_details.get('start_location', {}).get('postalCode', ''),
+                            "country": pickup_location.country,
+                        }
+                    },
+                    "dropoff": {
+                        "locationId": dropoff_location.code,
+                        "address": {
+                            "line1": dropoff_location.address or '',
+                            "city": dropoff_location.city,
+                            "country": dropoff_location.country,
                         }
                     },
                     "passengers": car_booking.passengers,
@@ -641,6 +679,15 @@ class CarBookingViewSet(viewsets.ModelViewSet):
                     "remarks": f"Booking created via API for booking {car_booking.booking_reference}"
                 }
             }
+
+            # If there are child seats, add them to the payload
+            if car_booking.child_seats > 0:
+                amadeus_payload["data"]["extras"] = [
+                    {"type": "CHILD_SEAT", "quantity": car_booking.child_seats}
+                ]
+
+            # Log the complete payload for debugging
+            logger.info(f"Creating transfer booking with payload: {amadeus_payload}")
 
             # Make API call to create booking
             response = amadeus_service.create_transfer_booking(amadeus_payload)
@@ -746,6 +793,8 @@ class CarBookingViewSet(viewsets.ModelViewSet):
                 detail="An unexpected error occurred while cancelling booking",
                 code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
 @payment_schema
 class PaymentViewSet(viewsets.ModelViewSet):
     queryset = Payment.objects.all()
