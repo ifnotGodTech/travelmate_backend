@@ -742,7 +742,7 @@ class UserViewSet(ModelViewSet):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     @extend_schema(tags=["auth", "User Management"])
-    @action(["get"], detail=False, authentication_classes=[JWTAuthentication])
+    @action(["post"], detail=False, authentication_classes=[JWTAuthentication])
     def logout(self, request, *args, **kwargs):
         if settings.TOKEN_MODEL:
             settings.TOKEN_MODEL.objects.filter(user=request.user).delete()

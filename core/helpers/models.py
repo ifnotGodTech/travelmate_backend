@@ -21,7 +21,7 @@ def generate_uuid() -> str:
 
     16^10 = 1,099,511,627,776
     """
-    return uuid.uuid4().hex[:10]
+    return uuid.uuid4().hex
 
 
 class ChoiceArrayField(ArrayField):

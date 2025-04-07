@@ -483,10 +483,12 @@ class VerifyOTPSerializer(serializers.Serializer):
 
 class ProfileSerializers:
     class BaseProfileSerializer(serializers.ModelSerializer):
+        email = serializers.EmailField(source="user.email", read_only=True)
+
         class Meta:
             model = Profile
             fields = (
-               "id", "first_name", "last_name", "gender",
+               "id", "email", "first_name", "last_name", "gender",
                 "date_of_birth", "address", "mobile_number"
             )
 
