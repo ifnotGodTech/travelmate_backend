@@ -166,30 +166,22 @@ transfer_search_schema = extend_schema_view(
         ),
         examples=[
             OpenApiExample(
-                'Example 1',
-                summary='Simple transfer search',
+                'Example',
+                summary='Paris transfer with geo coordinates',
                 value={
-                    'pickup_location': 'LHR',
-                    'pickup_date': '2023-12-25',
-                    'pickup_time': '10:00',
-                    'passengers': 2
+                    'pickup_location': 'CDG',
+                    'dropoff_location': 'FR',
+                    'pickup_date': '2025-04-10',
+                    'pickup_time': '10:30',
+                    'end_address': 'Avenue Anatole France, 5',
+                    'end_city': 'Paris',
+                    'end_country': 'FR',
+                    'end_geo_lat': 48.859466,
+                    'end_geo_long': 2.2976965,
+                    'price_min': 50,
+                    'price_max': 150
                 },
-                description='Basic transfer search from Heathrow Airport'
-            ),
-            OpenApiExample(
-                'Example 2',
-                summary='Transfer with address details',
-                value={
-                    'pickup_location': 'LHR',
-                    'dropoff_location': 'London',
-                    'end_address': '123 Main St',
-                    'end_city': 'London',
-                    'pickup_date': '2023-12-25',
-                    'pickup_time': '10:00',
-                    'passengers': 4,
-                    'vehicle_type': 'LUXURY'
-                },
-                description='Transfer search with specific address details'
+                description='Transfer search from Charles de Gaulle to Eiffel Tower with price range'
             )
         ]
     ),
@@ -221,29 +213,53 @@ car_booking_schema = extend_schema_view(
         description="Returns details of a specific car booking.",
         tags=['Car Bookings']
     ),
+
     create=extend_schema(
         summary="Create a car booking",
-        description="Create a new car booking.",
+        description="Create a new car booking based on a previously searched transfer.",
         tags=['Car Bookings'],
         request=inline_serializer(
             name='CarBookingCreateRequest',
             fields={
-                'transfer_id': serializers.CharField(),
-                'passengers': serializers.IntegerField(default=1),
-                'child_seats': serializers.IntegerField(default=0),
-                'notes': serializers.CharField(required=False)
+                'transfer_id': serializers.CharField(help_text='ID of the previously searched transfer'),
+                'passengers': serializers.IntegerField(default=1, help_text='Number of passengers'),
+                'child_seats': serializers.IntegerField(default=0, help_text='Number of child seats required'),
+                'notes': serializers.CharField(required=False, help_text='Additional booking notes'),
+                'customer': serializers.DictField(
+                    help_text='Customer details for the booking',
+                    child=serializers.CharField(),
+                    default={
+                        'firstName': 'John',
+                        'lastName': 'Doe',
+                        'title': 'Mr',
+                        'contacts': {
+                            'email': 'john.doe@example.com',
+                            'phoneNumber': '+1234567890'
+                        }
+                    }
+                )
             }
         ),
         examples=[
             OpenApiExample(
-                'Example 1',
-                summary='Create booking',
+                'Example',
+                summary='Create booking with full customer details',
                 value={
                     'transfer_id': 'TRANS12345',
                     'passengers': 2,
-                    'child_seats': 1
+                    'child_seats': 1,
+                    'notes': 'Arriving on Flight BA123',
+                    'customer': {
+                        'firstName': 'Jane',
+                        'lastName': 'Smith',
+                        'title': 'Ms',
+                        'contacts': {
+                            'email': 'jane.smith@example.com',
+                            'phoneNumber': '+1987654321'
+                        }
+                    }
                 },
-                description='Create a new car booking'
+                description='Create a car booking with complete customer information'
             )
         ]
     ),
@@ -269,10 +285,20 @@ car_booking_schema = extend_schema_view(
         request=inline_serializer(
             name='ProcessPaymentRequest',
             fields={
-                'payment_method_id': serializers.CharField(),
+                'payment_method_id': serializers.CharField(),  # Changed back to payment_method_id
                 'save_payment_method': serializers.BooleanField(default=False)
             }
         ),
+        examples=[
+            OpenApiExample(
+                'Example 1',
+                summary='Process payment with Visa card',
+                value={
+                    'payment_method_id': 'pm_card_visa'  # Changed back to payment_method_id
+                },
+                description='Process a payment for a booking using a Visa card'
+            )
+        ],
         responses={
             200: inline_serializer(
                 name='ProcessPaymentResponse',
@@ -317,11 +343,22 @@ payment_schema = extend_schema_view(
             name='PaymentCreateRequest',
             fields={
                 'booking_id': serializers.IntegerField(),
-                'payment_method': serializers.CharField(),
+                'payment_method': serializers.CharField(),  # Keep as payment_method for this endpoint
                 'transaction_id': serializers.CharField(required=False),
                 'notes': serializers.CharField(required=False)
             }
-        )
+        ),
+        examples=[
+            OpenApiExample(
+                'Example 1',
+                summary='Create payment with Visa card',
+                value={
+                    'booking_id': 1,
+                    'payment_method': 'pm_card_visa'  # Keep as payment_method for this endpoint
+                },
+                description='Create a payment record using a Visa card'
+            )
+        ]
     ),
     update=extend_schema(
         summary="Update a payment",
