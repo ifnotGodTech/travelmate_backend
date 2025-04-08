@@ -6,8 +6,9 @@ from django.db.models import EmailField
 from django.db.models import BooleanField
 from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
+from django.conf import settings
 
-from core.helpers.enums import GenderChoice
+from core.helpers.enums import Account_Delete_Reason_Choices, GenderChoice
 
 from .managers import UserManager
 from django.db import models
@@ -43,6 +44,16 @@ class User(AbstractUser):
         """
         return reverse("users:detail", kwargs={"pk": self.id})
 
+class AccountDeletionReason(models.Model):
+    user = auto_prefetch.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True
+    )
+    reason = models.CharField(
+        max_length=50, choices=Account_Delete_Reason_Choices.choices,
+        default=Account_Delete_Reason_Choices.OTHERS
+    )
+    additional_feedback = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
 
 class Profile(models.Model):
     """
@@ -65,3 +76,10 @@ class Profile(models.Model):
         _("Profile Picture"), upload_to="profile_pics/",
         blank=True, null=True
     )
+
+
+    @property
+    def get_profile_picture(self):
+        if self.profile_picture:
+            return self.profile_picture.url
+        return f'{settings.STATIC_URL}images/avatar.png'

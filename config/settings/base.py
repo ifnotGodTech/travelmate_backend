@@ -354,11 +354,19 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "EXCEPTION_HANDLER": "core.helpers.custom_exceptions.custom_exception_handler",
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "PAGE_SIZE": 10,
 
 }
 
 # django-cors-headers - https://github.com/adamchainz/django-cors-headers#setup
 CORS_URLS_REGEX = r"^/api/.*$"
+CORS_ALLOW_ALL_ORIGINS = True
+# CORS_ALLOWED_ORIGINS = [
+#     "http://localhost:5173",
+#     "https://skeema.onrender.com",
+#     "https://skeema.dev",
+# ]
 
 # By Default swagger ui is available only to admin user(s). You can change permission classes to change that
 # See more configuration options at https://drf-spectacular.readthedocs.io/en/latest/settings.html#settings
@@ -416,6 +424,7 @@ DJOSER = {
         "username_reset_confirm": "core.applications.users.api.serializers.UsernameResetConfirmSerializer",
         "username_reset_confirm_retype": "core.applications.users.api.serializers.UsernameResetConfirmRetypeSerializer",
         "activation": "core.applications.users.api.serializers.ActivationSerializer",
+        "user_delete": "core.applications.users.api.serializers.UserDeleteSerializer",
     },
     "PASSWORD_RESET_CONFIRM_URL": "password/reset/confirm/{uid}/{token}",
     "ACTIVATION_URL": "activate/{uid}/{token}",
@@ -460,3 +469,32 @@ STRIPE_PUBLISHABLE_TEST_KEY = env("STRIPE_PUBLISHABLE_TEST_KEY")
 STRIPE_SECRET_TEST_KEY = env("STRIPE_SECRET_TEST_KEY")
 STRIPE_API_TESTING = env.bool("STRIPE_API_TESTING", True)
 STRIPE_WEBHOOK_SECRET = env('STRIPE_WEBHOOK_SECRET', default='')
+
+
+# OTP_SECRET = env("OTP_SECRET", default="JBSWY3DPEHPK3PXP")
+
+
+# CACHES
+# ------------------------------------------------------------------------------
+CACHES = {
+    "default": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": REDIS_URL,
+        "OPTIONS": {
+            "CLIENT_CLASS": "django_redis.client.DefaultClient",
+            # Mimicking memcache behavior.
+            # https://github.com/jazzband/django-redis#memcached-exceptions-behavior
+            "IGNORE_EXCEPTIONS": True,
+        },
+    },
+}
+
+AUTH_PASSWORD_VALIDATORS = [{
+    "NAME": "core.helpers.password_validator.CustomPasswordValidator"
+}]
+# AUTH_PASSWORD_VALIDATORS = [
+#     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+#     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator", "OPTIONS": {"min_length": 8}},
+#     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+#     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+# ]

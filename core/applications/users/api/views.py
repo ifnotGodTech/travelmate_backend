@@ -6,6 +6,7 @@ from django.core.cache import cache
 from rest_framework import viewsets, permissions, status
 from rest_framework.filters import OrderingFilter
 from rest_framework.filters import SearchFilter
+from drf_spectacular.utils import extend_schema_view
 
 from django.contrib.auth import logout
 import csv
@@ -38,10 +39,10 @@ from rest_framework_simplejwt.settings import api_settings
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.viewsets import ViewSet
 
-from core.applications.users.models import Profile, User
+from core.applications.users.models import AccountDeletionReason, Profile, User
 from core.applications.users.token import default_token_generator
 from core.helpers.custom_exceptions import CustomError
-from core.applications.users.api.serializers import AdminRegistrationSerializer, AdminUserSerializer, CustomUserCreateSerializer, EmailSubmissionSerializer, PasswordRetypeSerializer, ProfileSerializers, UserSerializer, VerifyOTPSerializer
+from core.applications.users.api.serializers import AdminRegistrationSerializer, AdminUserDetailSerializer, AdminUserSerializer, CustomUserCreateSerializer, EmailSubmissionSerializer, OTPVerificationSerializer, PasswordRetypeSerializer, PasswordSetSerializer, ProfileSerializers, UserDeleteSerializer, UserSerializer, VerifyOTPSerializer
 from core.helpers.authentication import CustomJWTAuthentication
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -53,7 +54,18 @@ from allauth.socialaccount.providers.apple.views import AppleOAuth2Adapter
 from django_filters.rest_framework import DjangoFilterBackend
 from core.applications.users.api.schemas import(
     submit_email_schema, verify_otp_schema, verify_admin_schema,
-    resend_otp_schema
+    resend_otp_schema, admin_list_user_schema, admin_deactivate_user_schema,
+    admin_export_user_schema, set_password_schema, login_validate_email_schema,
+    login_validate_password_schema
+)
+from django.conf import settings as django_settings
+from django.db.models import Count
+from rest_framework.views import APIView
+from drf_spectacular.utils import (
+    extend_schema,
+    extend_schema_view,
+    OpenApiResponse,
+    OpenApiExample,
 )
 
 logger = logging.getLogger(__name__)
@@ -98,16 +110,77 @@ class TokenViewBase(generics.GenericAPIView):
         return Response(serializer.validated_data, status=status.HTTP_200_OK)
 
 
-class TokenObtainPairView(TokenViewBase):
+# class TokenObtainPairView(TokenViewBase):
+#     """
+#     Takes a set of user credentials and returns an access and refresh JSON web
+#     token pair to prove the authentication of those credentials.
+#     """
+
+#     _serializer_class = api_settings.TOKEN_OBTAIN_SERIALIZER
+
+
+# token_obtain_pair = TokenObtainPairView.as_view()
+
+class ValidateEmailView(APIView):
+    permission_classes = [AllowAny]
+
+
+    @login_validate_email_schema
+    def post(self, request):
+        email = request.data.get("email")
+        if not email:
+            return Response(
+                {"detail": "Email is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if User.objects.filter(email=email).exists():
+            return Response(
+                {"detail": "Email exists."},
+                status=status.HTTP_200_OK
+            )
+
+        return Response(
+            {"detail": "Email not found."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+
+class ValidatePasswordView(APIView):
     """
-    Takes a set of user credentials and returns an access and refresh JSON web
-    token pair to prove the authentication of those credentials.
+    Validates the email and password, and returns access/refresh tokens using
+    the same serializer used by TokenObtainPairView.
     """
+    permission_classes = [AllowAny]
+    def get_serializer_class(self):
+        """
+        Resolves the TOKEN_OBTAIN_SERIALIZER setting,
+        whether it's a class or a string path.
+        """
+        serializer = api_settings.TOKEN_OBTAIN_SERIALIZER
+        if isinstance(serializer, str):
+            return import_string(serializer)
+        return serializer
 
-    _serializer_class = api_settings.TOKEN_OBTAIN_SERIALIZER
+    @login_validate_password_schema
+    def post(self, request, *args, **kwargs):
+        serializer_class = self.get_serializer_class()
+        serializer = serializer_class(
+            data=request.data, context={'request': request}
+        )
+        try:
+            serializer.is_valid(raise_exception=True)
+        except Exception:
+            return Response(
+                {
+                    "detail": "The password you entered doesn't match our records. "
+                              "Try again or click on 'Forgot password'."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
+        return Response(serializer.validated_data, status=status.HTTP_200_OK)
 
-token_obtain_pair = TokenObtainPairView.as_view()
 
 
 class TokenObtainSlidingView(TokenViewBase):
@@ -169,87 +242,211 @@ class TokenBlacklistView(TokenViewBase):
 
 token_blacklist = TokenBlacklistView.as_view()
 
-@extend_schema(tags=["User Register with OTP"])
-class OTPRegistrationViewSet(ViewSet):
-    """Handles OTP-based registration and verification."""
+
+class BaseOTPRegistrationViewSet(ViewSet):
     permission_classes = [AllowAny]
-    OTP_EXPIRY = 400  # 6 minutes
+    OTP_EXPIRY = 600  # 10 minutes
     OTP_DIGITS = 4
     OTP_SECRET = "JBSWY3DPEHPK3PXP"
+    is_admin = False  # to be overridden by AdminRegistrationViewSet
 
     def generate_otp(self, email):
-        """Generates and caches a 4-digit OTP."""
         otp = pyotp.TOTP(self.OTP_SECRET, digits=self.OTP_DIGITS).now()
         cache.set(email, otp, timeout=self.OTP_EXPIRY)
-        logger.info(f"OTP generated for {email}")
         return otp
 
     def send_otp_email(self, request, email, otp):
-        """Sends OTP via email."""
         OTPRegistrationEmail(request, {"otp": otp}).send([email])
         logger.info(f"OTP email sent to {email}")
 
-    def generate_tokens(self, user):
-        """Generates JWT tokens."""
-        refresh = RefreshToken.for_user(user)
-        return {"refresh": str(refresh), "access": str(refresh.access_token)}
-
     def validate_otp(self, email, otp):
-        """Validates OTP from cache."""
         cached_otp = cache.get(email)
-        if cached_otp == otp:
+        if cached_otp and cached_otp == otp:
+            cache.set(f"{email}_verified", True, timeout=self.OTP_EXPIRY)
             cache.delete(email)
             return True
         return False
 
+    def generate_tokens(self, user):
+        refresh = RefreshToken.for_user(user)
+        return {"refresh": str(refresh), "access": str(refresh.access_token)}
+
     @submit_email_schema
     @action(detail=False, methods=["post"])
     def submit_email(self, request):
-        """Submits email to receive an OTP."""
         serializer = EmailSubmissionSerializer(data=request.data)
         if serializer.is_valid():
             email = serializer.validated_data["email"]
-            self.send_otp_email(request, email, self.generate_otp(email))
-            return Response({"message": "OTP sent to your email."}, status=status.HTTP_200_OK)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    def register_user(self, request, serializer_class):
-        """Registers a user or admin after OTP validation."""
-        serializer = serializer_class(data=request.data)
-        if serializer.is_valid():
-            email, otp = serializer.validated_data["email"], serializer.validated_data["otp"].strip()
-            if self.validate_otp(email, otp):
-                user = serializer.save()
-                logger.info(f"Account created for {email}")
-                return Response({"message": "User created successfully.", **self.generate_tokens(user)}, status=status.HTTP_201_CREATED)
-            return Response({"error": "Invalid or expired OTP."}, status=status.HTTP_400_BAD_REQUEST)
+            if User.objects.filter(email=email).exists():
+                return Response(
+                    {"message": "A user with this email is already registered."},
+                    status=status.HTTP_307_TEMPORARY_REDIRECT
+                )
+
+            otp = self.generate_otp(email)
+            self.send_otp_email(request, email, otp)
+            return Response({"message": "OTP sent to your email."}, status=status.HTTP_200_OK)
+
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     @verify_otp_schema
     @action(detail=False, methods=["post"])
-    def verify_otp_and_set_password(self, request):
-        """Verifies OTP, sets password, and logs in the user."""
-        return self.register_user(request, CustomUserCreateSerializer)
+    def verify_otp(self, request):
+        serializer = OTPVerificationSerializer(data=request.data)
+        if serializer.is_valid():
+            email = serializer.validated_data["email"]
+            otp = serializer.validated_data["otp"]
 
-    @verify_admin_schema
-    @action(detail=False, methods=["post"])
-    def verify_admin(self, request):
-        """Verifies OTP and registers an admin."""
-        return self.register_user(request, AdminRegistrationSerializer)
+            if self.validate_otp(email, otp):
+                return Response({"message": "OTP verified. Proceed to set your password."}, status=status.HTTP_200_OK)
+
+            return Response({"error": "Invalid or expired OTP."}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     @resend_otp_schema
     @action(detail=False, methods=["post"])
     def resend_otp(self, request):
-        """Resends OTP to the user."""
         serializer = EmailSubmissionSerializer(data=request.data)
         if serializer.is_valid():
             email = serializer.validated_data["email"]
-            self.send_otp_email(request, email, self.generate_otp(email))
-            return Response({"message": "New OTP sent to your email."}, status=status.HTTP_200_OK)
+
+            if not User.objects.filter(email=email).exists():
+                return Response(
+                    {"error": "User not found with this email."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            otp = self.generate_otp(email)
+            self.send_otp_email(request, email, otp)
+            return Response({"message": "A new OTP has been sent to your email."}, status=status.HTTP_200_OK)
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @set_password_schema
+    @action(detail=False, methods=["post"])
+    def set_password(self, request):
+        serializer = PasswordSetSerializer(data=request.data)
+        if serializer.is_valid():
+            email = serializer.validated_data["email"]
+
+            if not cache.get(f"{email}_verified"):
+                return Response({"error": "OTP not verified or expired."}, status=status.HTTP_400_BAD_REQUEST)
+
+            user, created = User.objects.get_or_create(email=email)
+            user.set_password(serializer.validated_data["password"])
+
+            if self.is_admin:
+                user.is_staff = True
+                user.is_admin = True
+                user.is_superuser = True
+
+            user.save()
+            cache.delete(f"{email}_verified")
+
+            tokens = self.generate_tokens(user)
+            return Response(
+                {
+                    "message": "Admin account created successfully." if self.is_admin else "Password set successfully.",
+                    "tokens": tokens,
+                },
+                status=status.HTTP_201_CREATED,
+            )
+
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
+
+@extend_schema(tags=["User Register with OTP"])
+class UserRegistrationViewSet(BaseOTPRegistrationViewSet):
+    """Handles OTP-based user registration."""
+    is_admin = False
+
+
+@extend_schema(tags=["Admin Register with OTP"])
+class AdminRegistrationViewSet(BaseOTPRegistrationViewSet):
+    """Handles OTP-based admin registration."""
+    is_admin = True
+
+
 @extend_schema(tags=["User"])
+@extend_schema_view(
+    me=extend_schema(
+        methods=["GET"],
+        summary="Use this when user wants to Get his account",
+        description="Retrieve the profile of the currently authenticated user.",
+        responses={
+            200: OpenApiResponse(description="User profile retrieved successfully."),
+            401: OpenApiResponse(description="Authentication credentials were not provided or are invalid."),
+        },
+    ),
+    me__put=extend_schema(
+        methods=["PUT"],
+        summary="Use this when user wants to Update his account",
+        description="Fully update the current user's profile.",
+        request=settings.SERIALIZERS.user,
+        responses={
+            200: OpenApiResponse(description="User profile updated successfully."),
+            400: OpenApiResponse(description="Invalid data."),
+            401: OpenApiResponse(description="Authentication required."),
+        },
+    ),
+    me__patch=extend_schema(
+        methods=["PATCH"],
+        summary="Use this when user wants to Partially Update his account",
+        description="Partially update the current user's profile.",
+        request=settings.SERIALIZERS.user,
+        responses={
+            200: OpenApiResponse(description="User profile partially updated successfully."),
+            400: OpenApiResponse(description="Invalid data."),
+            401: OpenApiResponse(description="Authentication required."),
+        },
+    ),
+    delete=extend_schema(
+        methods=["DELETE"],
+        summary="Use this when user wants to Delete his account",
+        description=(
+            "Delete the currently authenticated user's account.\n\n"
+            "**Required fields:**\n"
+            "- `reason` – one of the following options:\n"
+            "  - `Found another app`\n"
+            "  - `Too many notifications`\n"
+            "  - `Overloaded with content`\n"
+            "  - `Security concern`\n"
+            "  - `Others`\n\n"
+            "- If `reason` is set to `Others`, the `additional_feedback` field **must** be provided.\n"
+            "- `additional_feedback` is optional for other reasons.\n\n"
+            "Upon successful request:\n"
+            "- The account will be deleted.\n"
+            "- The user will be logged out.\n"
+            "- The deletion reason will be recorded for internal analytics."
+        ),
+        request=settings.SERIALIZERS.user_delete,
+        responses={
+            204: OpenApiResponse(description="Account successfully deleted."),
+            400: OpenApiResponse(description="Missing or invalid deletion reason or feedback."),
+            401: OpenApiResponse(description="Authentication required."),
+        },
+        examples=[
+            OpenApiExample(
+                name="Account Deletion with Standard Reason",
+                value={
+                    "reason": "Too many notifications"
+                },
+                request_only=True,
+            ),
+            OpenApiExample(
+                name="Account Deletion with 'Others' Reason",
+                value={
+                    "reason": "Others",
+                    "additional_feedback": "I prefer to stay offline for a while."
+                },
+                request_only=True,
+            ),
+        ]
+    )
+)
 class UserViewSet(ModelViewSet):
     serializer_class = settings.SERIALIZERS.user
     queryset = User.objects.all()
@@ -480,44 +677,68 @@ class UserViewSet(ModelViewSet):
         self.perform_destroy(instance)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
-
     @action(["get", "put", "patch", "delete"], detail=False)
     def me(self, request, *args, **kwargs):
+        """
+        Handle authenticated user profile operations:
+        - GET: Retrieve profile
+        - PUT: Fully update profile
+        - PATCH: Partially update profile
+        - DELETE: Delete account (requires reason)
+        """
         self.get_object = self.get_instance
+
         if request.method == "GET":
             return self.retrieve(request, *args, **kwargs)
+
         if request.method == "PUT":
             return self.update(request, *args, **kwargs)
+
         if request.method == "PATCH":
             return self.partial_update(request, *args, **kwargs)
+
         if request.method == "DELETE":
-            return self.destroy(request, *args, **kwargs)
+            instance = self.get_object()
 
-    def retrieve(self, request, *args, **kwargs):
-        instance = self.get_object()
-        serializer = self.get_serializer(instance)
-        return Response(serializer.data)
+            serializer = UserDeleteSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
 
-    @action(["post"], detail=False)
-    def activation(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        user = serializer.user
-        user.is_active = True
-        user.save()
+            AccountDeletionReason.objects.create(
+                user=instance,
+                reason=serializer.validated_data["reason"],
+                additional_feedback=serializer.validated_data.get("additional_feedback", "")
+            )
 
-        signals.user_activated.send(
-            sender=self.__class__,
-            user=user,
-            request=self.request,
-        )
+            utils.logout_user(request)
+            self.perform_destroy(instance)
+            return Response(status=status.HTTP_204_NO_CONTENT)
 
-        if settings.SEND_CONFIRMATION_EMAIL:
-            context = {"user": user}
-            to = [get_user_email(user)]
-            settings.EMAIL.confirmation(self.request, context).send(to)
 
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        def retrieve(self, request, *args, **kwargs):
+            instance = self.get_object()
+            serializer = self.get_serializer(instance)
+            return Response(serializer.data)
+
+        @action(["post"], detail=False)
+        def activation(self, request, *args, **kwargs):
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            user = serializer.user
+            user.is_active = True
+            user.save()
+
+            signals.user_activated.send(
+                sender=self.__class__,
+                user=user,
+                request=self.request,
+            )
+
+            if settings.SEND_CONFIRMATION_EMAIL:
+                context = {"user": user}
+                to = [get_user_email(user)]
+                settings.EMAIL.confirmation(self.request, context).send(to)
+
+            return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(["post"], detail=False)
     def resend_activation(self, request, *args, **kwargs):
@@ -628,7 +849,7 @@ class UserViewSet(ModelViewSet):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     @extend_schema(tags=["auth", "User Management"])
-    @action(["get"], detail=False, authentication_classes=[JWTAuthentication])
+    @action(["post"], detail=False, authentication_classes=[JWTAuthentication])
     def logout(self, request, *args, **kwargs):
         if settings.TOKEN_MODEL:
             settings.TOKEN_MODEL.objects.filter(user=request.user).delete()
@@ -732,44 +953,156 @@ class ProfileViewSet(ModelViewSet):
         return Response(serializer.data, status=status.HTTP_202_ACCEPTED)
 
 
+class FacebookLoginView(SocialLoginView):
+    """
+    Facebook OAuth Login View
 
-class GoogleLoginView(SocialLoginView):
-    adapter_class = GoogleOAuth2Adapter
+    This endpoint allows users to authenticate using a Facebook OAuth access token.
+    Users must first obtain an access token from Facebook by signing in via Facebook OAuth.
+    Once they receive a valid access token, they can send it to this API to authenticate.
+
+    If the token is valid, the API will return a Django authentication token, which can be
+    used for subsequent authenticated requests.
+    """
+
+    adapter_class = FacebookOAuth2Adapter
+
     @extend_schema(
-        summary="Google OAuth Login",
-        description="Authenticate using a Google OAuth access token",
+        summary="Facebook OAuth Login",
+        description="""
+        Authenticate users using Facebook OAuth.
+
+        **How it Works:**
+        1. The user selects "Sign in with Facebook" in the frontend application.
+        2. Facebook provides an access token upon successful authentication.
+        3. The frontend sends this access token to this endpoint.
+        4. The API verifies the token with Facebook and, if valid:
+            - Creates a user account (if they are new).
+            - Returns a Django authentication token for further API requests.
+
+        **Request Format:**
+        Send a `POST` request with a valid `access_token` obtained from Facebook.
+
+        **Example Request:**
+        ```json
+        {
+            "access_token": "EAAJZ..."
+        }
+        ```
+
+        **Response Format:**
+        If authentication is successful, the API returns an authentication token.
+
+        **Example Response:**
+        ```json
+        {
+            "key": "7f4e265c8f8c5e64db..."
+        }
+        ```
+        """,
         request={
             "application/json": {
                 "type": "object",
-                "properties": {"access_token": {"type": "string"}}
+                "properties": {
+                    "access_token": {
+                        "type": "string",
+                        "description": "Facebook OAuth access token obtained after successful login with Facebook."
+                    }
+                },
+                "required": ["access_token"]
             }
         },
         responses={
             200: {
                 "type": "object",
-                "properties": {"key": {"type": "string"}}
+                "properties": {
+                    "key": {
+                        "type": "string",
+                        "description": "Django authentication token to be used in future requests."
+                    }
+                }
+            },
+            400: {
+                "description": "Invalid access token or authentication failed."
             }
         },
     )
     def post(self, request, *args, **kwargs):
         return super().post(request, *args, **kwargs)
 
-class FacebookLoginView(SocialLoginView):
-    adapter_class = FacebookOAuth2Adapter
+
+
+class GoogleLoginView(SocialLoginView):
+    """
+    Google OAuth Login View
+
+    This endpoint allows users to authenticate using a Google OAuth access token.
+    Users must first obtain an access token from Google by signing in via Google OAuth.
+    Once they receive a valid access token, they can send it to this API to authenticate.
+
+    If the token is valid, the API will return a Django authentication token, which can be
+    used for subsequent authenticated requests.
+    """
+
+    adapter_class = GoogleOAuth2Adapter
 
     @extend_schema(
-        summary="Facebook OAuth Login",
-        description="Authenticate using a Facebook OAuth access token",
+        summary="Google OAuth Login",
+        description="""
+        Authenticate users using Google OAuth.
+
+        **How it Works:**
+        1. The user selects "Sign in with Google" in the frontend application.
+        2. Google provides an access token upon successful authentication.
+        3. The frontend sends this access token to this endpoint.
+        4. The API verifies the token with Google and, if valid:
+            - Creates a user account (if they are new).
+            - Returns a Django authentication token for further API requests.
+
+        **Request Format:**
+        Send a `POST` request with a valid `access_token` obtained from Google.
+
+        **Example Request:**
+        ```json
+        {
+            "access_token": "ya29.a0AfH6SM..."
+        }
+        ```
+
+        **Response Format:**
+        If authentication is successful, the API returns an authentication token.
+
+        **Example Response:**
+        ```json
+        {
+            "key": "7f4e265c8f8c5e64db..."
+        }
+        ```
+        """,
         request={
             "application/json": {
                 "type": "object",
-                "properties": {"access_token": {"type": "string"}}
+                "properties": {
+                    "access_token": {
+                        "type": "string",
+                        "description": "Google OAuth access token obtained after successful login with Google."
+                    }
+                },
+                "required": ["access_token"]
             }
         },
         responses={
             200: {
                 "type": "object",
-                "properties": {"key": {"type": "string"}}
+                "properties": {
+                    "key": {
+                        "type": "string",
+                        "description": "Django authentication token to be used in future requests."
+                    }
+                }
+            },
+            400: {
+                "description": "Invalid access token or authentication failed."
             }
         },
     )
@@ -778,21 +1111,76 @@ class FacebookLoginView(SocialLoginView):
 
 
 class AppleLoginView(SocialLoginView):
+    """
+    Apple OAuth Login View
+
+    This endpoint allows users to authenticate using an Apple OAuth access token.
+    Users must first obtain an access token from Apple by signing in via "Sign in with Apple."
+    Once they receive a valid access token, they can send it to this API to authenticate.
+
+    If the token is valid, the API will return a Django authentication token, which can be
+    used for subsequent authenticated requests.
+    """
+
     adapter_class = AppleOAuth2Adapter
 
     @extend_schema(
         summary="Apple OAuth Login",
-        description="Authenticate using a Apple OAuth access token",
+        description="""
+        Authenticate users using Apple OAuth.
+
+        **How it Works:**
+        1. The user selects "Sign in with Apple" in the frontend application.
+        2. Apple provides an access token upon successful authentication.
+        3. The frontend sends this access token to this endpoint.
+        4. The API verifies the token with Apple and, if valid:
+            - Creates a user account (if they are new).
+            - Returns a Django authentication token for further API requests.
+
+        **Request Format:**
+        Send a `POST` request with a valid `access_token` obtained from Apple.
+
+        **Example Request:**
+        ```json
+        {
+            "access_token": "eyJraWQiOiJ..."
+        }
+        ```
+
+        **Response Format:**
+        If authentication is successful, the API returns an authentication token.
+
+        **Example Response:**
+        ```json
+        {
+            "key": "7f4e265c8f8c5e64db..."
+        }
+        ```
+        """,
         request={
             "application/json": {
                 "type": "object",
-                "properties": {"access_token": {"type": "string"}}
+                "properties": {
+                    "access_token": {
+                        "type": "string",
+                        "description": "Apple OAuth access token obtained after successful login with Apple."
+                    }
+                },
+                "required": ["access_token"]
             }
         },
         responses={
             200: {
                 "type": "object",
-                "properties": {"key": {"type": "string"}}
+                "properties": {
+                    "key": {
+                        "type": "string",
+                        "description": "Django authentication token to be used in future requests."
+                    }
+                }
+            },
+            400: {
+                "description": "Invalid access token or authentication failed."
             }
         },
     )
@@ -800,38 +1188,112 @@ class AppleLoginView(SocialLoginView):
         return super().post(request, *args, **kwargs)
 
 
-
 @extend_schema(tags=["Admins Management"])
-class AdminUserViewSet(ModelViewSet):
-    queryset = User.objects.all()
-    serializer_class = AdminUserSerializer
+# class AdminUserViewSet(ModelViewSet):
+#     queryset = User.objects.all()
+#     serializer_class = AdminUserSerializer
+#     permission_classes = [permissions.IsAdminUser]
+#     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+#     filterset_fields = ["is_active"]
+#     search_fields = ["email"]
+#     ordering_fields = ["date_joined"]
+
+#     def get_queryset(self):
+#         """
+#         Returns all users by default.
+#         If `booking_type` is provided in query params, filter users based on bookings.
+#         """
+#         queryset = super().get_queryset()
+#         booking_type = self.request.query_params.get("booking_type")
+
+#         if booking_type:
+#             filters = {
+#                 "flights": "flight_bookings__isnull",
+#                 "hotels": "hotel_bookings__isnull",
+#                 "cars": "car_bookings__isnull",
+#             }
+#             filter_condition = filters.get(booking_type)
+#             if filter_condition:
+#                 queryset = queryset.filter(**{filter_condition: False}).distinct()
+
+#         return queryset
+
+
+#     @action(detail=True, methods=["patch"], url_path="deactivate")
+#     def deactivate_user(self, request, pk=None):
+#         """
+#         Deactivate a user by setting is_active to False.
+#         """
+#         user = self.get_object()
+#         user.is_active = False
+#         user.save()
+#         return Response({"detail": "User has been deactivated"}, status=status.HTTP_200_OK)
+
+#     @action(detail=False, methods=["get"], url_path="export")
+#     def export_users(self, request):
+#         """
+#         Export users as a CSV file.
+#         """
+#         response = HttpResponse(content_type="text/csv")
+#         response["Content-Disposition"] = 'attachment; filename="users.csv"'
+
+#         writer = csv.writer(response)
+#         writer.writerow(["ID", "Email", "Username", "Is Active", "Date Joined"])
+
+#         users = self.get_queryset()
+#         for user in users:
+#             writer.writerow([user.id, user.email, user.username, user.is_active, user.date_joined])
+
+#         return response
+
+
+class AdminUserViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing admin users, including filtering, searching,
+    exporting user data, and retrieving booking history.
+    """
+    queryset = User.objects.all().prefetch_related("profile")
     permission_classes = [permissions.IsAdminUser]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ["is_active"]
-    search_fields = ["email"]
+    search_fields = ["email", "name"]
     ordering_fields = ["date_joined"]
+
+    def get_serializer_class(self):
+        """Return appropriate serializer for list and detail views."""
+        if self.action == "retrieve":
+            return AdminUserDetailSerializer
+        return AdminUserSerializer
 
     def get_queryset(self):
         """
         Returns all users by default.
-        If `booking_type` is provided in query params, filter users based on bookings.
+        If `booking_type` is provided in query params, filters users based on booking type.
         """
-        queryset = super().get_queryset()
+        queryset = super().get_queryset().annotate(
+            total_flight_bookings=Count("flight_bookings"),
+            total_car_bookings=Count("car_bookings"),
+        )
+
         booking_type = self.request.query_params.get("booking_type")
 
         if booking_type:
-            filters = {
-                "flights": "flight_bookings__isnull",
-                "hotels": "hotel_bookings__isnull",
-                "cars": "car_bookings__isnull",
-            }
-            filter_condition = filters.get(booking_type)
-            if filter_condition:
-                queryset = queryset.filter(**{filter_condition: False}).distinct()
+            if booking_type == "flights":
+                queryset = queryset.filter(flight_bookings__isnull=False).distinct()
+            elif booking_type == "cars":
+                queryset = queryset.filter(car_bookings__isnull=False).distinct()
 
         return queryset
 
+    @admin_list_user_schema
+    def list(self, request, *args, **kwargs):
+        """
+        Retrieves a list of users with profile details.
+        Supports filtering, searching, and ordering.
+        """
+        return super().list(request, *args, **kwargs)
 
+    @admin_deactivate_user_schema
     @action(detail=True, methods=["patch"], url_path="deactivate")
     def deactivate_user(self, request, pk=None):
         """
@@ -842,19 +1304,27 @@ class AdminUserViewSet(ModelViewSet):
         user.save()
         return Response({"detail": "User has been deactivated"}, status=status.HTTP_200_OK)
 
+    @admin_export_user_schema
     @action(detail=False, methods=["get"], url_path="export")
     def export_users(self, request):
         """
-        Export users as a CSV file.
+        Export users as a CSV file including ID, Email, Name, Status, Date Joined, and Total Bookings.
         """
         response = HttpResponse(content_type="text/csv")
         response["Content-Disposition"] = 'attachment; filename="users.csv"'
 
         writer = csv.writer(response)
-        writer.writerow(["ID", "Email", "Username", "Is Active", "Date Joined"])
+        writer.writerow(["ID", "Email", "Name", "Is Active", "Date Joined", "Total Bookings"])
 
         users = self.get_queryset()
         for user in users:
-            writer.writerow([user.id, user.email, user.username, user.is_active, user.date_joined])
+            writer.writerow([
+                user.id,
+                user.email,
+                user.name,
+                user.is_active,
+                user.date_joined.strftime("%Y-%m-%d"),
+                user.total_bookings,
+            ])
 
         return response
