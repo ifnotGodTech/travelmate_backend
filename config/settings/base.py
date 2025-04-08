@@ -89,6 +89,7 @@ THIRD_PARTY_APPS = [
     "allauth.socialaccount.providers.apple",
     "corsheaders",
     "drf_spectacular",
+    "channels",
 ]
 
 LOCAL_APPS = [
@@ -99,6 +100,7 @@ LOCAL_APPS = [
     "core.applications.bookings",
     "core.applications.faq",
     "core.applications.tickets",
+    "core.applications.chat",
     # Your stuff: custom apps go here
 ]
 # https://docs.djangoproject.com/en/dev/ref/settings/#installed-apps
@@ -399,10 +401,13 @@ SPECTACULAR_SETTINGS = {
 # ------------------------------------------------------------------------------
 
 API_VERSION = env("API_VERSION", default="v1")
+ASGI_APPLICATION = "config.asgi.application"
+
 
 CHANNEL_LAYERS = {
     "default": {
-        "BACKEND": "channels_redis.pubsub.RedisPubSubChannelLayer",
+        # "BACKEND": "channels_redis.pubsub.RedisPubSubChannelLayer",
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
             "hosts": env.list(
                 "CHANNEL_LAYERS_HOST",
