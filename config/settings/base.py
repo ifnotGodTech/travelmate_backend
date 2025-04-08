@@ -98,6 +98,7 @@ LOCAL_APPS = [
     "core.applications.cars",
     "core.applications.bookings",
     "core.applications.faq",
+    "core.applications.tickets",
     # Your stuff: custom apps go here
 ]
 # https://docs.djangoproject.com/en/dev/ref/settings/#installed-apps
@@ -366,7 +367,9 @@ SPECTACULAR_SETTINGS = {
     "DESCRIPTION": "Documentation of API endpoints of travelmate-backend",
     "VERSION": "1.0.0",
     "SERVE_PERMISSIONS": ["rest_framework.permissions.AllowAny"],
+    'SERVE_INCLUDE_SCHEMA': False,
     "SCHEMA_PATH_PREFIX": "/api/",
+
 
     # Now we can properly map enum names to importable classes
     'ENUM_NAME_OVERRIDES': {

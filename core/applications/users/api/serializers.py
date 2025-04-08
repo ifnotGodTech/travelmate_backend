@@ -26,6 +26,7 @@ from core.helpers.interface import BaseModelNoDefs
 from core.helpers.password_validator import validate_password_strength
 import logging
 from core.applications.users.email import ActivationEmail, ConfirmationEmail
+from drf_spectacular.utils import extend_schema_field
 
 logger = logging.getLogger(__name__)
 from django.contrib.auth import get_user_model
@@ -487,12 +488,13 @@ class AdminUserSerializer(serializers.ModelSerializer):
             # "hotel_bookings",
             "car_bookings",
         )
-
+    @extend_schema_field(str)
     def get_flight_bookings(self, obj):
         return FlightBooking.objects.filter(user=obj).values(
             "id",
             "service_fee",
         )
+    @extend_schema_field(str)
     def get_car_bookings(self, obj):
         return Booking.objects.filter(user=obj).values(
             "id"
