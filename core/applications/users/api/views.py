@@ -1041,7 +1041,7 @@ class GoogleLoginView(SocialLoginView):
     Once they receive a valid access token, they can send it to this API to authenticate.
 
     If the token is valid, the API will return a Django authentication token, which can be
-    used for subsequent authenticated requests.
+    used for subsequent authenticated requests..
     """
 
     adapter_class = GoogleOAuth2Adapter
