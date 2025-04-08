@@ -8,6 +8,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.core import exceptions as django_exceptions
 from core.applications.cars.models import Booking, CarBooking
 from core.applications.flights.models import FlightBooking
+from core.helpers.enums import Account_Delete_Reason_Choices
 from djoser.compat import get_user_email
 from djoser.conf import settings
 from djoser.serializers import UserCreateSerializer
@@ -364,6 +365,23 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                 user=self.user,
             )
         return data
+
+
+
+class UserDeleteSerializer(serializers.Serializer):
+    reason = serializers.ChoiceField(choices=Account_Delete_Reason_Choices.choices)
+    additional_feedback = serializers.CharField(required=False, allow_blank=True)
+
+    def validate(self, data):
+        reason = data.get("reason")
+        feedback = data.get("additional_feedback", "").strip()
+
+        if reason == Account_Delete_Reason_Choices.OTHERS and not feedback:
+            raise serializers.ValidationError({
+                "additional_feedback": "Please provide feedback when selecting 'Others'."
+            })
+        return data
+
 
 
 # class VerifyOTPSerializer(serializers.Serializer):

@@ -14,6 +14,14 @@ class BookingStatus(TextChoices):
     CANCELLED = ("Cancelled", "Cancelled")
     REFUNDED = ("Refunded", "Refunded")
 
+
+class Account_Delete_Reason_Choices(TextChoices):
+    FOUND_ANOTHER_APP = ("Found another app", "Found another app")
+    TOO_MANY_NOTIFICATIONS = ("Too many notifications", "Too many notifications")
+    OVERLOADED_WITH_CONTENT = ("Overloaded with content", "Overloaded with content")
+    SECURITY_CONCERN = ("Security concern", "Security concern")
+    OTHERS = ("Others", "Others")
+=======
 class BookingType(TextChoices):
     CAR = "car", "Car Rental"
     FLIGHT = "flight", "Flight"

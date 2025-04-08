@@ -421,6 +421,7 @@ DJOSER = {
         "username_reset_confirm": "core.applications.users.api.serializers.UsernameResetConfirmSerializer",
         "username_reset_confirm_retype": "core.applications.users.api.serializers.UsernameResetConfirmRetypeSerializer",
         "activation": "core.applications.users.api.serializers.ActivationSerializer",
+        "user_delete": "core.applications.users.api.serializers.UserDeleteSerializer",
     },
     "PASSWORD_RESET_CONFIRM_URL": "password/reset/confirm/{uid}/{token}",
     "ACTIVATION_URL": "activate/{uid}/{token}",
