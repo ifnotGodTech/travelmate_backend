@@ -6,6 +6,7 @@ from django.core.cache import cache
 from rest_framework import viewsets, permissions, status
 from rest_framework.filters import OrderingFilter
 from rest_framework.filters import SearchFilter
+from drf_spectacular.utils import extend_schema_view
 
 from django.contrib.auth import logout
 import csv
@@ -38,10 +39,10 @@ from rest_framework_simplejwt.settings import api_settings
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.viewsets import ViewSet
 
-from core.applications.users.models import Profile, User
+from core.applications.users.models import AccountDeletionReason, Profile, User
 from core.applications.users.token import default_token_generator
 from core.helpers.custom_exceptions import CustomError
-from core.applications.users.api.serializers import AdminRegistrationSerializer, AdminUserDetailSerializer, AdminUserSerializer, CustomUserCreateSerializer, EmailSubmissionSerializer, OTPVerificationSerializer, PasswordRetypeSerializer, PasswordSetSerializer, ProfileSerializers, UserSerializer, VerifyOTPSerializer
+from core.applications.users.api.serializers import AdminRegistrationSerializer, AdminUserDetailSerializer, AdminUserSerializer, CustomUserCreateSerializer, EmailSubmissionSerializer, OTPVerificationSerializer, PasswordRetypeSerializer, PasswordSetSerializer, ProfileSerializers, UserDeleteSerializer, UserSerializer, VerifyOTPSerializer
 from core.helpers.authentication import CustomJWTAuthentication
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -60,6 +61,12 @@ from core.applications.users.api.schemas import(
 from django.conf import settings as django_settings
 from django.db.models import Count
 from rest_framework.views import APIView
+from drf_spectacular.utils import (
+    extend_schema,
+    extend_schema_view,
+    OpenApiResponse,
+    OpenApiExample,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -364,6 +371,82 @@ class AdminRegistrationViewSet(BaseOTPRegistrationViewSet):
 
 
 @extend_schema(tags=["User"])
+@extend_schema_view(
+    me=extend_schema(
+        methods=["GET"],
+        summary="Use this when user wants to Get his account",
+        description="Retrieve the profile of the currently authenticated user.",
+        responses={
+            200: OpenApiResponse(description="User profile retrieved successfully."),
+            401: OpenApiResponse(description="Authentication credentials were not provided or are invalid."),
+        },
+    ),
+    me__put=extend_schema(
+        methods=["PUT"],
+        summary="Use this when user wants to Update his account",
+        description="Fully update the current user's profile.",
+        request=settings.SERIALIZERS.user,
+        responses={
+            200: OpenApiResponse(description="User profile updated successfully."),
+            400: OpenApiResponse(description="Invalid data."),
+            401: OpenApiResponse(description="Authentication required."),
+        },
+    ),
+    me__patch=extend_schema(
+        methods=["PATCH"],
+        summary="Use this when user wants to Partially Update his account",
+        description="Partially update the current user's profile.",
+        request=settings.SERIALIZERS.user,
+        responses={
+            200: OpenApiResponse(description="User profile partially updated successfully."),
+            400: OpenApiResponse(description="Invalid data."),
+            401: OpenApiResponse(description="Authentication required."),
+        },
+    ),
+    delete=extend_schema(
+        methods=["DELETE"],
+        summary="Use this when user wants to Delete his account",
+        description=(
+            "Delete the currently authenticated user's account.\n\n"
+            "**Required fields:**\n"
+            "- `reason` – one of the following options:\n"
+            "  - `Found another app`\n"
+            "  - `Too many notifications`\n"
+            "  - `Overloaded with content`\n"
+            "  - `Security concern`\n"
+            "  - `Others`\n\n"
+            "- If `reason` is set to `Others`, the `additional_feedback` field **must** be provided.\n"
+            "- `additional_feedback` is optional for other reasons.\n\n"
+            "Upon successful request:\n"
+            "- The account will be deleted.\n"
+            "- The user will be logged out.\n"
+            "- The deletion reason will be recorded for internal analytics."
+        ),
+        request=settings.SERIALIZERS.user_delete,
+        responses={
+            204: OpenApiResponse(description="Account successfully deleted."),
+            400: OpenApiResponse(description="Missing or invalid deletion reason or feedback."),
+            401: OpenApiResponse(description="Authentication required."),
+        },
+        examples=[
+            OpenApiExample(
+                name="Account Deletion with Standard Reason",
+                value={
+                    "reason": "Too many notifications"
+                },
+                request_only=True,
+            ),
+            OpenApiExample(
+                name="Account Deletion with 'Others' Reason",
+                value={
+                    "reason": "Others",
+                    "additional_feedback": "I prefer to stay offline for a while."
+                },
+                request_only=True,
+            ),
+        ]
+    )
+)
 class UserViewSet(ModelViewSet):
     serializer_class = settings.SERIALIZERS.user
     queryset = User.objects.all()
@@ -594,44 +677,68 @@ class UserViewSet(ModelViewSet):
         self.perform_destroy(instance)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
-
     @action(["get", "put", "patch", "delete"], detail=False)
     def me(self, request, *args, **kwargs):
+        """
+        Handle authenticated user profile operations:
+        - GET: Retrieve profile
+        - PUT: Fully update profile
+        - PATCH: Partially update profile
+        - DELETE: Delete account (requires reason)
+        """
         self.get_object = self.get_instance
+
         if request.method == "GET":
             return self.retrieve(request, *args, **kwargs)
+
         if request.method == "PUT":
             return self.update(request, *args, **kwargs)
+
         if request.method == "PATCH":
             return self.partial_update(request, *args, **kwargs)
+
         if request.method == "DELETE":
-            return self.destroy(request, *args, **kwargs)
+            instance = self.get_object()
 
-    def retrieve(self, request, *args, **kwargs):
-        instance = self.get_object()
-        serializer = self.get_serializer(instance)
-        return Response(serializer.data)
+            serializer = UserDeleteSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
 
-    @action(["post"], detail=False)
-    def activation(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        user = serializer.user
-        user.is_active = True
-        user.save()
+            AccountDeletionReason.objects.create(
+                user=instance,
+                reason=serializer.validated_data["reason"],
+                additional_feedback=serializer.validated_data.get("additional_feedback", "")
+            )
 
-        signals.user_activated.send(
-            sender=self.__class__,
-            user=user,
-            request=self.request,
-        )
+            utils.logout_user(request)
+            self.perform_destroy(instance)
+            return Response(status=status.HTTP_204_NO_CONTENT)
 
-        if settings.SEND_CONFIRMATION_EMAIL:
-            context = {"user": user}
-            to = [get_user_email(user)]
-            settings.EMAIL.confirmation(self.request, context).send(to)
 
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        def retrieve(self, request, *args, **kwargs):
+            instance = self.get_object()
+            serializer = self.get_serializer(instance)
+            return Response(serializer.data)
+
+        @action(["post"], detail=False)
+        def activation(self, request, *args, **kwargs):
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            user = serializer.user
+            user.is_active = True
+            user.save()
+
+            signals.user_activated.send(
+                sender=self.__class__,
+                user=user,
+                request=self.request,
+            )
+
+            if settings.SEND_CONFIRMATION_EMAIL:
+                context = {"user": user}
+                to = [get_user_email(user)]
+                settings.EMAIL.confirmation(self.request, context).send(to)
+
+            return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(["post"], detail=False)
     def resend_activation(self, request, *args, **kwargs):
