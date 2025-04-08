@@ -97,6 +97,7 @@ LOCAL_APPS = [
     "core.applications.flights",
     "core.applications.cars",
     "core.applications.bookings",
+    "core.applications.faq",
     # Your stuff: custom apps go here
 ]
 # https://docs.djangoproject.com/en/dev/ref/settings/#installed-apps
@@ -374,6 +375,22 @@ SPECTACULAR_SETTINGS = {
     "VERSION": "1.0.0",
     "SERVE_PERMISSIONS": ["rest_framework.permissions.AllowAny"],
     "SCHEMA_PATH_PREFIX": "/api/",
+
+    # Now we can properly map enum names to importable classes
+    'ENUM_NAME_OVERRIDES': {
+        'GenderChoice': 'core.helpers.enums.GenderChoice',
+        'BookingStatus': 'core.helpers.enums.BookingStatus',
+        'BookingType': 'core.helpers.enums.BookingType',
+        'PassengerGenderChoice': 'core.helpers.enums.PassengerGenderChoice',
+        'FlightBookingTypeChoice': 'core.helpers.enums.FlightBookingTypeChoice',
+        'PassengerTitleChoice': 'core.helpers.enums.PassengerTitleChoice',
+    },
+
+    'ENUM_GENERATE_CHOICE_DESCRIPTION': True,
+    'ENUM_ADD_EXPLICIT_BLANK_NULL_CHOICE': False,
+
+    'COMPONENT_SPLIT_REQUEST': True,
+    'COMPONENT_NO_READ_ONLY_REQUIRED': True,
 }
 # Your stuff...
 # ------------------------------------------------------------------------------

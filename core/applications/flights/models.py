@@ -7,6 +7,8 @@ from django.core.validators import MinValueValidator, MaxValueValidator
 from django.core.exceptions import ValidationError
 from decimal import Decimal
 import auto_prefetch
+from core.helpers.enums import PassengerGenderChoice, FlightBookingTypeChoice, PassengerTitleChoice
+
 
 class ServiceFeeSetting(models.Model):
     """
@@ -54,11 +56,11 @@ class Passenger(models.Model):
         ('O', 'Other'),
     ]
 
-    title = models.CharField(max_length=4, choices=TITLE_CHOICES)
+    title = models.CharField(max_length=4, choices=PassengerTitleChoice.choices)
     first_name = models.CharField(max_length=100)
     last_name = models.CharField(max_length=100)
     date_of_birth = models.DateField()
-    gender = models.CharField(max_length=1, choices=GENDER_CHOICES)
+    gender = models.CharField(max_length=1, choices=PassengerGenderChoice.choices)
     email = models.EmailField()
     phone = models.CharField(max_length=20)
     passport_number = models.CharField(max_length=50, blank=True, null=True)
@@ -86,11 +88,7 @@ class FlightBooking(auto_prefetch.Model):
     """
     Flight-specific booking details that extend the base Booking model
     """
-    BOOKING_TYPE_CHOICES = [
-        ('ONE_WAY', 'One Way'),
-        ('ROUND_TRIP', 'Round Trip'),
-        ('MULTI_CITY', 'Multi City'),
-    ]
+
 
     booking = auto_prefetch.OneToOneField(
         'stay.Booking',
@@ -107,7 +105,7 @@ class FlightBooking(auto_prefetch.Model):
         unique=True,
         default=generate_booking_reference
     )
-    booking_type = models.CharField(max_length=10, choices=BOOKING_TYPE_CHOICES)
+    booking_type = models.CharField(max_length=10, choices=FlightBookingTypeChoice.choices)
     currency = models.CharField(max_length=3, default='USD')
     service_fee = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     base_flight_cost = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)

@@ -6,10 +6,12 @@ from .views import UnifiedBookingAdminViewSet
 
 app_name = "bookings"
 
+
 router = DefaultRouter()
 router.register(r'admin/bookings', UnifiedBookingAdminViewSet, basename='admin-bookings')
 
 
 urlpatterns = [
     path('', include(router.urls)),
+
 ]

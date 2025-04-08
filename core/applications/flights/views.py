@@ -12,6 +12,8 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 from django.http import HttpResponse
+from .flight_schema import flight_booking_schema, flight_search_schema
+from drf_spectacular.utils import extend_schema_view, extend_schema
 import uuid
 import requests
 from .models import FlightBooking, Flight, Passenger, PassengerBooking, PaymentDetail, ServiceFeeSetting
@@ -96,6 +98,7 @@ class StripePaymentProcessor:
             return {'error': str(e)}
 
 
+@flight_booking_schema
 class FlightBookingViewSet(viewsets.ModelViewSet):
     queryset = FlightBooking.objects.all()
     serializer_class = FlightBookingSerializer
@@ -808,7 +811,7 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
 
 
 
-
+@flight_search_schema
 class FlightSearchViewSet(viewsets.ViewSet):
     """
     ViewSet for flight search operations

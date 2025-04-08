@@ -107,6 +107,7 @@ class CarBookingAdmin(admin.ModelAdmin):
     list_display = (
         'booking_reference',
         'car',
+        'customer_name_display',
         'pickup_location',
         'dropoff_location',
         'pickup_date',
@@ -128,7 +129,11 @@ class CarBookingAdmin(admin.ModelAdmin):
         'car__model',
         'booking__user__email',
         'booking__user__first_name',
-        'booking__user__last_name'
+        'booking__user__last_name',
+        'customer_first_name',
+        'customer_last_name',
+        'customer_email',
+        'customer_phone'
     )
     raw_id_fields = ('car', 'pickup_location', 'dropoff_location', 'booking', 'cancelled_by')
     date_hierarchy = 'pickup_date'
@@ -146,6 +151,15 @@ class CarBookingAdmin(admin.ModelAdmin):
     def get_updated_at(self, obj):
         return obj.booking.updated_at if obj.booking else None  # Fetch from related Booking
 
+    @admin.display(
+        description='Customer'
+    )
+    def customer_name_display(self, obj):
+        if obj.customer_first_name and obj.customer_last_name:
+            return f"{obj.customer_first_name} {obj.customer_last_name}"
+        elif obj.booking and obj.booking.user:
+            return obj.booking.user.get_full_name() or obj.booking.user.email
+        return "N/A"
 
     fieldsets = (
         ('Booking Information', {
@@ -154,6 +168,15 @@ class CarBookingAdmin(admin.ModelAdmin):
                 'booking_reference',
                 'amadeus_booking_reference',
                 'transfer_id'
+            )
+        }),
+        ('Customer Details', {
+            'fields': (
+                'customer_first_name',
+                'customer_last_name',
+                'customer_title',
+                'customer_email',
+                'customer_phone',
             )
         }),
         ('Car Details', {

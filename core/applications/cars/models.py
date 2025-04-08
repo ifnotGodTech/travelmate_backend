@@ -152,6 +152,11 @@ class CarBooking(models.Model):
     )
     special_requests = models.TextField(blank=True, null=True)
     cancellation_reason = models.TextField(blank=True, null=True)
+    customer_first_name = models.CharField(max_length=100)
+    customer_last_name = models.CharField(max_length=100)
+    customer_title = models.CharField(max_length=20, blank=True)
+    customer_email = models.EmailField()
+    customer_phone = models.CharField(max_length=20)
 
 
     def __str__(self):

@@ -7,6 +7,7 @@ from rest_framework_simplejwt.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.exceptions import InvalidToken
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.settings import api_settings
+from drf_spectacular.extensions import OpenApiAuthenticationExtension
 
 logger = logging.getLogger(__name__)
 
@@ -90,3 +91,16 @@ class CustomJWTAuthentication(JWTAuthentication):
             raise AuthenticationFailed(_("User is inactive"), code="user_inactive")
 
         return user
+
+
+class CustomJWTAuthScheme(OpenApiAuthenticationExtension):
+    target_class = CustomJWTAuthentication
+    name = 'bearerAuth'
+
+    def get_security_definition(self, auto_schema):
+        return {
+            'type': 'http',
+            'scheme': 'bearer',
+            'bearerFormat': 'JWT',
+            'description': 'JWT Token Authentication (CustomJWTAuthentication)',
+        }
