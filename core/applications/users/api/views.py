@@ -792,7 +792,7 @@ class UserViewSet(ModelViewSet):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        serializer.user.set_password(serializer.data["new_password"])
+        serializer.user.set_password(serializer.validated_data["new_password"])
         if hasattr(serializer.user, "last_login"):
             serializer.user.last_login = now()
         serializer.user.save()
@@ -802,6 +802,7 @@ class UserViewSet(ModelViewSet):
             to = [get_user_email(serializer.user)]
             settings.EMAIL.password_changed_confirmation(self.request, context).send(to)
             print("password reseted")
+
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(["post"], detail=False, url_path=f"set_{User.USERNAME_FIELD}")
