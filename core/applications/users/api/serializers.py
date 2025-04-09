@@ -202,6 +202,8 @@ class EmailAndTokenSerializer(serializers.Serializer):
             self.user,
             self.initial_data.get("token", ""),
         )
+        generated_token = default_token_generator.make_token(self.user)
+        print(generated_token, ".>>>>>>>>>>>>>>>>>>>>>>")
         if is_token_valid:
             return validated_data
         key_error = "invalid_token"
