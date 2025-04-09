@@ -2,6 +2,16 @@ from django.contrib import admin
 from django.utils.html import format_html
 from django.urls import reverse
 from .models import ChatSession, ChatMessage
+from django.conf import settings
+from allauth.account.decorators import secure_admin_login
+from django.utils.translation import gettext_lazy as _
+
+
+# Only apply this if the setting is True
+if settings.DJANGO_ADMIN_FORCE_ALLAUTH:
+    # Force the `admin` sign in process to go through the `django-allauth` workflow
+    admin.autodiscover()
+    admin.site.login = secure_admin_login(admin.site.login)  # type: ignore[method-assign]
 
 class ChatMessageInline(admin.TabularInline):
     model = ChatMessage

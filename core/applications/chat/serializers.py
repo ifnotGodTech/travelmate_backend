@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from .models import ChatSession, ChatMessage
+from drf_spectacular.utils import extend_schema_field
 
 User = get_user_model()
 
@@ -11,6 +12,7 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = ['id', 'first_name', 'email']
 
+    @extend_schema_field(str)
     def get_first_name(self, user):
         try:
             from core.applications.users.models import Profile
@@ -54,6 +56,7 @@ class ChatSessionSerializer(serializers.ModelSerializer):
                   'updated_at', 'assigned_admin', 'admin_info', 'unread_count', 'last_message']
         read_only_fields = ['created_at', 'updated_at']
 
+    @extend_schema_field(str)
     def get_unread_count(self, obj):
         # For users, count unread messages from admins
         # For admins, count unread messages from users
@@ -65,6 +68,7 @@ class ChatSessionSerializer(serializers.ModelSerializer):
                 return obj.messages.filter(sender__is_staff=True, is_read=False).count()
         return 0
 
+    @extend_schema_field(str)
     def get_last_message(self, obj):
         last_msg = obj.messages.order_by('-created_at').first()
         if last_msg:

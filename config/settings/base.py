@@ -101,6 +101,7 @@ LOCAL_APPS = [
     "core.applications.faq",
     "core.applications.tickets",
     "core.applications.chat",
+    "core.applications.policy",
     # Your stuff: custom apps go here
 ]
 # https://docs.djangoproject.com/en/dev/ref/settings/#installed-apps
