@@ -169,7 +169,7 @@ admin_export_user_schema = extend_schema(
 
 
 reset_password_schema = extend_schema(
-    summary="Request password reset email",
+    summary="(Step 1 to reset passoword.)Request password reset email",
     description="Initiate password reset process by sending an email with UID and token to the user.",
     request={"application/json": {"email": "user@example.com"}},
     responses={204: None},
@@ -183,7 +183,7 @@ reset_password_schema = extend_schema(
 )
 
 validate_password_reset_token_schema = extend_schema(
-    summary="Validate password reset token",
+    summary="(Step 2 to reset passoword.)Validate password reset token",
     description="Verifies that the provided UID and token are valid for password reset.",
     request=EmailAndTokenSerializer,
     responses={200: OpenApiExample(
@@ -219,9 +219,9 @@ reset_password_confirm_schema = extend_schema(
 )
 
 set_new_password_schema = extend_schema(
-    summary="Set new password (via reset)",
+    summary="(Step 3 to reset passoword.)Set new password (via reset)",
     description="Sets a new password using UID and token. Designed for separate password-reset flow.",
-    request=settings.SERIALIZERS.password_reset_confirm,
+    request=settings.SERIALIZERS.set_new_password,
     responses={204: None},
     examples=[
         OpenApiExample(

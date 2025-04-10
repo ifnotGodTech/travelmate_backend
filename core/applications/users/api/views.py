@@ -7,6 +7,7 @@ from rest_framework import viewsets, permissions, status
 from rest_framework.filters import OrderingFilter
 from rest_framework.filters import SearchFilter
 from drf_spectacular.utils import extend_schema_view
+from rest_framework.permissions import AllowAny
 
 from django.contrib.auth import logout
 import csv
@@ -42,7 +43,7 @@ from rest_framework.viewsets import ViewSet
 from core.applications.users.models import AccountDeletionReason, Profile, User
 from core.applications.users.token import default_token_generator
 from core.helpers.custom_exceptions import CustomError
-from core.applications.users.api.serializers import AdminRegistrationSerializer, AdminUserDetailSerializer, AdminUserSerializer, CustomUserCreateSerializer, EmailAndTokenSerializer, EmailSubmissionSerializer, OTPVerificationSerializer, PasswordRetypeSerializer, PasswordSetSerializer, ProfileSerializers, UserDeleteSerializer, UserSerializer, VerifyOTPSerializer
+from core.applications.users.api.serializers import AdminRegistrationSerializer, AdminUserDetailSerializer, AdminUserSerializer, CustomUserCreateSerializer, EmailAndTokenSerializer, EmailSubmissionSerializer, OTPVerificationSerializer, PasswordRetypeSerializer, PasswordSetSerializer, ProfileSerializers, SetNewPasswordSerializer, UserDeleteSerializer, UserSerializer, VerifyOTPSerializer
 from core.helpers.authentication import CustomJWTAuthentication
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -559,7 +560,7 @@ class UserViewSet(ModelViewSet):
             return settings.SERIALIZERS.activation
         if self.action == "resend_activation" or self.action == "reset_password":
             return settings.SERIALIZERS.password_reset
-        if self.action in ["reset_password_confirm", "set_new_password"]:
+        if self.action == "reset_password_confirm":
             if settings.PASSWORD_RESET_CONFIRM_RETYPE:
                 return settings.SERIALIZERS.password_reset_confirm_retype
             return settings.SERIALIZERS.password_reset_confirm
@@ -579,6 +580,8 @@ class UserViewSet(ModelViewSet):
             return settings.SERIALIZERS.username_reset_confirm
         if self.action == "me":
             return settings.SERIALIZERS.current_user
+        if self.action == "set_new_password":
+            return settings.SERIALIZERS.set_new_password
 
         return self.serializer_class
 
@@ -809,7 +812,8 @@ class UserViewSet(ModelViewSet):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     @validate_password_reset_token_schema
-    @action(["post"], detail=False)
+    @action(methods=["post"], detail=False,
+            permission_classes=[AllowAny])
     def validate_reset_token(self, request, *args, **kwargs):
         serializer = EmailAndTokenSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -818,7 +822,8 @@ class UserViewSet(ModelViewSet):
         return Response({"detail": "Token is valid."}, status=status.HTTP_200_OK)
 
     @set_new_password_schema
-    @action(["post"], detail=False)
+    @action(["post"], detail=False,
+            permission_classes=[AllowAny])
     def set_new_password(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)

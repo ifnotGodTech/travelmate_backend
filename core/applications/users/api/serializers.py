@@ -246,6 +246,36 @@ class PasswordRetypeSerializer(PasswordSerializer):
 
         return attrs
 
+class VerifiedEmailSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+    default_error_messages = {
+        "invalid_email": "No user found with that email. Create an account or try another email.",
+        "superuser_not_allowed": "Superuser accounts cannot reset their password using this flow.",
+    }
+
+    def validate(self, attrs):
+        email = self.initial_data.get("email", "")
+        try:
+            self.user = User.objects.get(email=email)
+        except (User.DoesNotExist, ValueError, TypeError, OverflowError) as e:
+            raise CustomError.BadRequest(
+                {"email": self.error_messages["invalid_email"]},
+                code="invalid_email"
+            ) from e
+
+        # Check if the user is a superuser
+        if self.user.is_superuser:
+            raise CustomError.BadRequest(
+                {"email": self.error_messages["superuser_not_allowed"]},
+                code="superuser_not_allowed"
+            )
+
+        return attrs
+
+
+class SetNewPasswordSerializer(VerifiedEmailSerializer, PasswordSerializer):
+    pass
 
 class UsernameSerializer(serializers.ModelSerializer):
     class Meta:

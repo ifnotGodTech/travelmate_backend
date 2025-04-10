@@ -355,18 +355,22 @@ REST_FRAMEWORK = {
     "EXCEPTION_HANDLER": "core.helpers.custom_exceptions.custom_exception_handler",
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 10,
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": "5/hour"
+    }
 
 }
 
 # django-cors-headers - https://github.com/adamchainz/django-cors-headers#setup
 CORS_URLS_REGEX = r"^/api/.*$"
-CORS_ALLOW_ALL_ORIGINS = True
-# CORS_ALLOWED_ORIGINS = [
-#     # "http://localhost:5173",
-#     # "https://skeema.onrender.com",
-#     # "https://skeema.dev",
-#     "https://travelmate-dashboard-ji4j.vercel.app/"
-# ]
+# CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    # "https://skeema.onrender.com",
+    # "https://skeema.dev",
+    "https://travelmate-dashboard-ji4j.vercel.app",
+]
 
 # By Default swagger ui is available only to admin user(s). You can change permission classes to change that
 # See more configuration options at https://drf-spectacular.readthedocs.io/en/latest/settings.html#settings
@@ -421,6 +425,7 @@ DJOSER = {
         "username_reset": "djoser.serializers.SendEmailResetSerializer",
         "username_reset_confirm": "core.applications.users.api.serializers.UsernameResetConfirmSerializer",
         "username_reset_confirm_retype": "core.applications.users.api.serializers.UsernameResetConfirmRetypeSerializer",
+        "set_new_password": "core.applications.users.api.serializers.SetNewPasswordSerializer",
         "activation": "core.applications.users.api.serializers.ActivationSerializer",
         "user_delete": "core.applications.users.api.serializers.UserDeleteSerializer",
     },
@@ -497,3 +502,29 @@ AUTH_PASSWORD_VALIDATORS = [{
 #     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
 #     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 # ]
+
+
+# Social account settings
+SOCIALACCOUNT_PROVIDERS = {
+    "google": {
+        "SCOPE": ["profile", "email"],
+        "AUTH_PARAMS": {"access_type": "online"},
+    },
+    "facebook": {
+        "SCOPE": ["email", "public_profile"],
+        "AUTH_PARAMS": {"auth_type": "reauthenticate"},
+        "METHOD": "oauth2",
+    },
+    "apple": {
+        "APP": {
+            "client_id": "your.service.id",
+            "secret": "your-key-id",
+            "key": "your-private-key",
+            "certificate_key": "your-certificate-key",
+        }
+    }
+}
+
+SOCIALACCOUNT_EMAIL_VERIFICATION = "none"
+SOCIALACCOUNT_EMAIL_REQUIRED = False
+SOCIALACCOUNT_QUERY_EMAIL = True

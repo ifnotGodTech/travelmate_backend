@@ -37,7 +37,7 @@ class AmadeusClient:
 amadeus_client = AmadeusClient().get_client()
 
 # print(amadeus_client.shopping.hotel_offers_search.get.__doc__, "xxxxxxxxxxxxxxxxxxxxxxxxxxx")
-print(amadeus_client.reference_data.locations.hotels.by_city.get.__doc__, "mmmmmmmmmmmmmmmmmmmmmmmmm")
+# print(amadeus_client.reference_data.locations.hotels.by_city.get.__doc__, "mmmmmmmmmmmmmmmmmmmmmmmmm")
 # print("cccccccccccccccccccccccccccccccccccccccc")
 # help(amadeus_client.reference_data.locations.hotels.by_city.get)
 # print(inspect.signature(amadeus_client.reference_data.locations.hotels.by_city.get),",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,")
