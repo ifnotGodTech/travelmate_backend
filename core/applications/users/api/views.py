@@ -792,24 +792,24 @@ class UserViewSet(ModelViewSet):
 
         return Response(status=status.HTTP_204_NO_CONTENT)
 
-    @reset_password_confirm_schema
-    @action(["post"], detail=False)
-    def reset_password_confirm(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+    # @reset_password_confirm_schema
+    # @action(["post"], detail=False)
+    # def reset_password_confirm(self, request, *args, **kwargs):
+    #     serializer = self.get_serializer(data=request.data)
+    #     serializer.is_valid(raise_exception=True)
 
-        serializer.user.set_password(serializer.validated_data["new_password"])
-        if hasattr(serializer.user, "last_login"):
-            serializer.user.last_login = now()
-        serializer.user.save()
+    #     serializer.user.set_password(serializer.validated_data["new_password"])
+    #     if hasattr(serializer.user, "last_login"):
+    #         serializer.user.last_login = now()
+    #     serializer.user.save()
 
-        if settings.PASSWORD_CHANGED_EMAIL_CONFIRMATION:
-            context = {"user": serializer.user}
-            to = [get_user_email(serializer.user)]
-            settings.EMAIL.password_changed_confirmation(self.request, context).send(to)
-            print("password reseted")
+    #     if settings.PASSWORD_CHANGED_EMAIL_CONFIRMATION:
+    #         context = {"user": serializer.user}
+    #         to = [get_user_email(serializer.user)]
+    #         settings.EMAIL.password_changed_confirmation(self.request, context).send(to)
+    #         print("password reseted")
 
-        return Response(status=status.HTTP_204_NO_CONTENT)
+    #     return Response(status=status.HTTP_204_NO_CONTENT)
 
     @validate_password_reset_token_schema
     @action(methods=["post"], detail=False,
