@@ -28,6 +28,7 @@ from core.helpers.interface import BaseModelNoDefs
 # from core.helpers.password_validator import validate_password_strength
 import logging
 from core.applications.users.email import ActivationEmail, ConfirmationEmail
+from drf_spectacular.utils import extend_schema_field
 
 logger = logging.getLogger(__name__)
 from django.contrib.auth import get_user_model
@@ -650,6 +651,7 @@ class AdminUserSerializer(serializers.ModelSerializer):
             "profile_picture", "date_created", "total_bookings"
         )
 
+    @extend_schema_field(str)
     def get_profile_picture(self, obj):
         """Retrieve the user's profile picture or default avatar."""
         profile = getattr(obj, "profile", None)
@@ -687,6 +689,7 @@ class AdminUserDetailSerializer(AdminUserSerializer):
             "service_fee",
             "base_flight_cost",
         )
+    @extend_schema_field(str)
 
     def get_car_bookings(self, obj):
         """Retrieve car booking history."""
