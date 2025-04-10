@@ -203,6 +203,8 @@ class EmailAndTokenSerializer(serializers.Serializer):
             self.user,
             self.initial_data.get("token", ""),
         )
+        generated_token = default_token_generator.make_token(self.user)
+        print(generated_token, ".>>>>>>>>>>>>>>>>>>>>>>")
         if is_token_valid:
             return validated_data
         key_error = "invalid_token"
@@ -618,7 +620,7 @@ class AdminUserSerializer(serializers.ModelSerializer):
             "id", "email", "first_name", "last_name", "name",
             "profile_picture", "date_created", "total_bookings"
         )
-        
+
     @extend_schema_field(str)
     def get_profile_picture(self, obj):
         """Retrieve the user's profile picture or default avatar."""

@@ -366,9 +366,10 @@ REST_FRAMEWORK = {
 CORS_URLS_REGEX = r"^/api/.*$"
 CORS_ALLOW_ALL_ORIGINS = True
 # CORS_ALLOWED_ORIGINS = [
-#     "http://localhost:5173",
-#     "https://skeema.onrender.com",
-#     "https://skeema.dev",
+#     # "http://localhost:5173",
+#     # "https://skeema.onrender.com",
+#     # "https://skeema.dev",
+#     "https://travelmate-dashboard-ji4j.vercel.app/"
 # ]
 
 # By Default swagger ui is available only to admin user(s). You can change permission classes to change that
@@ -440,7 +441,8 @@ DJOSER = {
     "USERNAME_CHANGED_EMAIL_CONFIRMATION": True,
     # "USER_CREATE_PASSWORD_RETYPE": True,
     "SET_PASSWORD_RETYPE": True,
-    "PASSWORD_RESET_CONFIRM_RETYPE": True,
+    # "PASSWORD_RESET_CONFIRM_RETYPE": True,
+    "PASSWORD_RESET_CONFIRM_RETYPE": False,
     "EMAIL": {
         "activation": "core.applications.users.email.ActivationEmail",
         "confirmation": "core.applications.users.email.ConfirmationEmail",

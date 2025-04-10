@@ -1,7 +1,7 @@
-from core.applications.users.api.serializers import AdminRegistrationSerializer, AdminUserSerializer, CustomUserCreateSerializer, EmailSubmissionSerializer, OTPVerificationSerializer, PasswordSetSerializer
+from core.applications.users.api.serializers import AdminRegistrationSerializer, AdminUserSerializer, CustomUserCreateSerializer, EmailAndTokenSerializer, EmailSubmissionSerializer, OTPVerificationSerializer, PasswordSetSerializer
 from drf_spectacular.utils import extend_schema
 from drf_spectacular.utils import OpenApiParameter, OpenApiExample, OpenApiTypes, OpenApiResponse
-
+from djoser.conf import settings
 
 login_validate_email_schema = extend_schema(
     summary="Validate Email",
@@ -166,3 +166,72 @@ admin_export_user_schema = extend_schema(
         description="Export user data as a CSV file.",
         responses={200: {"content": {"text/csv": {}}}},
     )
+
+
+reset_password_schema = extend_schema(
+    summary="Request password reset email",
+    description="Initiate password reset process by sending an email with UID and token to the user.",
+    request={"application/json": {"email": "user@example.com"}},
+    responses={204: None},
+    examples=[
+        OpenApiExample(
+            name="Password Reset Request",
+            value={"email": "user@example.com"},
+            request_only=True,
+        )
+    ],
+)
+
+validate_password_reset_token_schema = extend_schema(
+    summary="Validate password reset token",
+    description="Verifies that the provided UID and token are valid for password reset.",
+    request=EmailAndTokenSerializer,
+    responses={200: OpenApiExample(
+        name="Token Valid",
+        value={"detail": "Token is valid."},
+        response_only=True
+    )},
+    examples=[
+        OpenApiExample(
+            name="Token Validation",
+            value={"uid": "Mg", "token": "abc123-token"},
+            request_only=True,
+        )
+    ],
+)
+
+reset_password_confirm_schema = extend_schema(
+    summary="Confirm password reset",
+    description="Sets a new password using a valid UID and token. This completes the password reset process.",
+    request=settings.SERIALIZERS.password_reset_confirm,
+    responses={204: None},
+    examples=[
+        OpenApiExample(
+            name="Confirm Reset",
+            value={
+                "uid": "Mg",
+                "token": "abc123-token",
+                "new_password": "NewSecurePassword1!"
+            },
+            request_only=True,
+        )
+    ],
+)
+
+set_new_password_schema = extend_schema(
+    summary="Set new password (via reset)",
+    description="Sets a new password using UID and token. Designed for separate password-reset flow.",
+    request=settings.SERIALIZERS.password_reset_confirm,
+    responses={204: None},
+    examples=[
+        OpenApiExample(
+            name="Set New Password",
+            value={
+                "uid": "Mg",
+                "token": "abc123-token",
+                "new_password": "NewPassword123!"
+            },
+            request_only=True,
+        )
+    ],
+)

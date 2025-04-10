@@ -42,7 +42,7 @@ from rest_framework.viewsets import ViewSet
 from core.applications.users.models import AccountDeletionReason, Profile, User
 from core.applications.users.token import default_token_generator
 from core.helpers.custom_exceptions import CustomError
-from core.applications.users.api.serializers import AdminRegistrationSerializer, AdminUserDetailSerializer, AdminUserSerializer, CustomUserCreateSerializer, EmailSubmissionSerializer, OTPVerificationSerializer, PasswordRetypeSerializer, PasswordSetSerializer, ProfileSerializers, UserDeleteSerializer, UserSerializer, VerifyOTPSerializer
+from core.applications.users.api.serializers import AdminRegistrationSerializer, AdminUserDetailSerializer, AdminUserSerializer, CustomUserCreateSerializer, EmailAndTokenSerializer, EmailSubmissionSerializer, OTPVerificationSerializer, PasswordRetypeSerializer, PasswordSetSerializer, ProfileSerializers, UserDeleteSerializer, UserSerializer, VerifyOTPSerializer
 from core.helpers.authentication import CustomJWTAuthentication
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -56,7 +56,8 @@ from core.applications.users.api.schemas import(
     submit_email_schema, verify_otp_schema, verify_admin_schema,
     resend_otp_schema, admin_list_user_schema, admin_deactivate_user_schema,
     admin_export_user_schema, set_password_schema, login_validate_email_schema,
-    login_validate_password_schema
+    login_validate_password_schema, validate_password_reset_token_schema,  reset_password_schema,
+    reset_password_confirm_schema, set_new_password_schema
 )
 from django.conf import settings as django_settings
 from django.db.models import Count
@@ -558,7 +559,7 @@ class UserViewSet(ModelViewSet):
             return settings.SERIALIZERS.activation
         if self.action == "resend_activation" or self.action == "reset_password":
             return settings.SERIALIZERS.password_reset
-        if self.action == "reset_password_confirm":
+        if self.action in ["reset_password_confirm", "set_new_password"]:
             if settings.PASSWORD_RESET_CONFIRM_RETYPE:
                 return settings.SERIALIZERS.password_reset_confirm_retype
             return settings.SERIALIZERS.password_reset_confirm
@@ -774,6 +775,7 @@ class UserViewSet(ModelViewSet):
             update_session_auth_hash(self.request, self.request.user)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    @reset_password_schema
     @action(["post"], detail=False)
     def reset_password(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -787,12 +789,13 @@ class UserViewSet(ModelViewSet):
 
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    @reset_password_confirm_schema
     @action(["post"], detail=False)
     def reset_password_confirm(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        serializer.user.set_password(serializer.data["new_password"])
+        serializer.user.set_password(serializer.validated_data["new_password"])
         if hasattr(serializer.user, "last_login"):
             serializer.user.last_login = now()
         serializer.user.save()
@@ -802,6 +805,35 @@ class UserViewSet(ModelViewSet):
             to = [get_user_email(serializer.user)]
             settings.EMAIL.password_changed_confirmation(self.request, context).send(to)
             print("password reseted")
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @validate_password_reset_token_schema
+    @action(["post"], detail=False)
+    def validate_reset_token(self, request, *args, **kwargs):
+        serializer = EmailAndTokenSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        # If the token is valid, just return success
+        return Response({"detail": "Token is valid."}, status=status.HTTP_200_OK)
+
+    @set_new_password_schema
+    @action(["post"], detail=False)
+    def set_new_password(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        serializer.user.set_password(serializer.validated_data["new_password"])
+        if hasattr(serializer.user, "last_login"):
+            serializer.user.last_login = now()
+        serializer.user.save()
+
+        if settings.PASSWORD_CHANGED_EMAIL_CONFIRMATION:
+            context = {"user": serializer.user}
+            to = [get_user_email(serializer.user)]
+            settings.EMAIL.password_changed_confirmation(self.request, context).send(to)
+            print("password reseted")
+
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(["post"], detail=False, url_path=f"set_{User.USERNAME_FIELD}")
@@ -1041,7 +1073,7 @@ class GoogleLoginView(SocialLoginView):
     Once they receive a valid access token, they can send it to this API to authenticate.
 
     If the token is valid, the API will return a Django authentication token, which can be
-    used for subsequent authenticated requests.
+    used for subsequent authenticated requests..
     """
 
     adapter_class = GoogleOAuth2Adapter

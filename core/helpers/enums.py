@@ -21,6 +21,7 @@ class Account_Delete_Reason_Choices(TextChoices):
     OVERLOADED_WITH_CONTENT = ("Overloaded with content", "Overloaded with content")
     SECURITY_CONCERN = ("Security concern", "Security concern")
     OTHERS = ("Others", "Others")
+
 class BookingType(TextChoices):
     CAR = "car", "Car Rental"
     FLIGHT = "flight", "Flight"
