@@ -1,5 +1,6 @@
 # ruff: noqa
 from smtplib import SMTPRecipientsRefused
+from core.applications.users.api.permissions import IsSuperUser
 from core.applications.users.email import OTPRegistrationEmail
 import pyotp
 from django.core.cache import cache
@@ -58,7 +59,7 @@ from core.applications.users.api.schemas import(
     resend_otp_schema, admin_list_user_schema, admin_deactivate_user_schema,
     admin_export_user_schema, set_password_schema, login_validate_email_schema,
     login_validate_password_schema, validate_password_reset_token_schema,  reset_password_schema,
-    reset_password_confirm_schema, set_new_password_schema
+    make_admin_schema, set_new_password_schema
 )
 from django.conf import settings as django_settings
 from django.db.models import Count
@@ -132,18 +133,33 @@ class ValidateEmailView(APIView):
         email = request.data.get("email")
         if not email:
             return Response(
-                {"detail": "Email is required."},
+                # {"detail": "Email is required."},
+                {
+                    "Status": 400,
+                    "Message": "Email is required.",
+                    "Error": True
+                },
                 status=status.HTTP_400_BAD_REQUEST
             )
 
         if User.objects.filter(email=email).exists():
             return Response(
-                {"detail": "Email exists."},
+                # {"detail": "Email exists."},
+                {
+                    "Status": 200,
+                    "Message": "Email exists.",
+                    "Error": False
+                },
                 status=status.HTTP_200_OK
             )
 
         return Response(
-            {"detail": "Email not found."},
+            # {"detail": "Email not found."},
+            {
+                "Status": 400,
+                 "Message": "Email not found.",
+                 "Error": True
+            },
             status=status.HTTP_400_BAD_REQUEST
         )
 
@@ -174,9 +190,15 @@ class ValidatePasswordView(APIView):
             serializer.is_valid(raise_exception=True)
         except Exception:
             return Response(
+                # {
+                #     "detail": "The password you entered doesn't match our records. "
+                #               "Try again or click on 'Forgot password'."
+                # },
                 {
-                    "detail": "The password you entered doesn't match our records. "
-                              "Try again or click on 'Forgot password'."
+                    "Status": 400,
+                    "Message": "The password you entered doesn't match our records. "
+                              "Try again or click on 'Forgot password'.",
+                    "Error": True
                 },
                 status=status.HTTP_400_BAD_REQUEST
             )
@@ -282,13 +304,27 @@ class BaseOTPRegistrationViewSet(ViewSet):
 
             if User.objects.filter(email=email).exists():
                 return Response(
-                    {"message": "A user with this email is already registered."},
+                    # {"message": "A user with this email is already registered."},
+                    {
+                        "Status": 400,
+                        "Message": "A user with this email is already registered.",
+                        "Error": True
+                    },
+
                     status=status.HTTP_307_TEMPORARY_REDIRECT
                 )
 
             otp = self.generate_otp(email)
             self.send_otp_email(request, email, otp)
-            return Response({"message": "OTP sent to your email."}, status=status.HTTP_200_OK)
+            return Response(
+                # {"message": "OTP sent to your email."}
+                {
+                    "Status": 200,
+                    "Message": "OTP sent to your email.",
+                    "Error": False
+                },
+                status=status.HTTP_200_OK
+            )
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -301,9 +337,25 @@ class BaseOTPRegistrationViewSet(ViewSet):
             otp = serializer.validated_data["otp"]
 
             if self.validate_otp(email, otp):
-                return Response({"message": "OTP verified. Proceed to set your password."}, status=status.HTTP_200_OK)
+                return Response(
+                    # {"message": "OTP verified. Proceed to set your password."}
+                    {
+                        "Status": 200,
+                        "Message": "OTP verified. Proceed to set your password.",
+                        "Error": False
+                    },
+                    status=status.HTTP_200_OK
+                )
 
-            return Response({"error": "Invalid or expired OTP."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                # {"error": "Invalid or expired OTP."}
+                {
+                    "Status": 400,
+                    "Message": "Invalid or expired OTP.",
+                    "Error": True
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -316,13 +368,25 @@ class BaseOTPRegistrationViewSet(ViewSet):
 
             if not User.objects.filter(email=email).exists():
                 return Response(
-                    {"error": "User not found with this email."},
+                    # {"error": "User not found with this email."}
+                    {
+                        "Status": 400,
+                        "Message": "User not found with this email.",
+                        "Error": True
+                    },
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
             otp = self.generate_otp(email)
             self.send_otp_email(request, email, otp)
-            return Response({"message": "A new OTP has been sent to your email."}, status=status.HTTP_200_OK)
+            return Response(
+                # {"message": "A new OTP has been sent to your email."}
+                {
+                    "Status": 200,
+                    "Message": "A new OTP has been sent to your email.",
+                    "Error": False
+                }, status=status.HTTP_200_OK
+            )
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -334,7 +398,15 @@ class BaseOTPRegistrationViewSet(ViewSet):
             email = serializer.validated_data["email"]
 
             if not cache.get(f"{email}_verified"):
-                return Response({"error": "OTP not verified or expired."}, status=status.HTTP_400_BAD_REQUEST)
+                return Response(
+                    # {"error": "OTP not verified or expired."}
+                    {
+                        "Status": 400,
+                        "Message": "OTP not verified or expired.",
+                        "Error": True
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
             user, created = User.objects.get_or_create(email=email)
             user.set_password(serializer.validated_data["password"])
@@ -350,6 +422,7 @@ class BaseOTPRegistrationViewSet(ViewSet):
             tokens = self.generate_tokens(user)
             return Response(
                 {
+                    "Status": 201,
                     "message": "Admin account created successfully." if self.is_admin else "Password set successfully.",
                     "tokens": tokens,
                 },
@@ -819,7 +892,15 @@ class UserViewSet(ModelViewSet):
         serializer.is_valid(raise_exception=True)
 
         # If the token is valid, just return success
-        return Response({"detail": "Token is valid."}, status=status.HTTP_200_OK)
+        return Response(
+            # {"detail": "Token is valid."}
+            {
+                "Status": 200,
+                "Message": "Token is valid.",
+                "Error": False
+            }
+            , status=status.HTTP_200_OK
+        )
 
     @set_new_password_schema
     @action(["post"], detail=False,
@@ -1290,7 +1371,7 @@ class AdminUserViewSet(viewsets.ModelViewSet):
     exporting user data, and retrieving booking history.
     """
     queryset = User.objects.all().prefetch_related("profile")
-    permission_classes = [permissions.IsAdminUser]
+    permission_classes = [IsSuperUser]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ["is_active"]
     search_fields = ["email", "name"]
@@ -1339,7 +1420,15 @@ class AdminUserViewSet(viewsets.ModelViewSet):
         user = self.get_object()
         user.is_active = False
         user.save()
-        return Response({"detail": "User has been deactivated"}, status=status.HTTP_200_OK)
+        return Response(
+            # {"detail": "User has been deactivated"}
+            {
+                "Status": 200,
+                "Message": "User has been deactivated",
+                "Error": False
+            },
+            status=status.HTTP_200_OK
+        )
 
     @admin_export_user_schema
     @action(detail=False, methods=["get"], url_path="export")
@@ -1365,3 +1454,43 @@ class AdminUserViewSet(viewsets.ModelViewSet):
             ])
 
         return response
+
+    @make_admin_schema
+    @action(detail=True, methods=["patch"], url_path="make-admin")
+    def make_admin(self, request, pk=None):
+        """
+        Promote a user to admin (set is_staff=True).
+        Only superusers can perform this action.
+        """
+        if not request.user.is_superuser:
+            return Response(
+                {
+                    "Status": 403,
+                    "Message": "You do not have permission to perform this action.",
+                    "Error": True
+                },
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        user = self.get_object()
+        if user.is_staff:
+            return Response(
+                {
+                    "Status": 400,
+                    "Message": "User is already an admin.",
+                    "Error": True
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        user.is_staff = True
+        user.save()
+
+        return Response(
+            {
+                "Status": 200,
+                "Message": f"User '{user.email}' has been promoted to admin.",
+                "Error": False
+            },
+            status=status.HTTP_200_OK
+        )

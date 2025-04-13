@@ -235,3 +235,10 @@ set_new_password_schema = extend_schema(
         )
     ],
 )
+
+make_admin_schema = extend_schema(
+    operation_id="make_admin",
+    summary="Promote User to Admin",
+    description="Promote a user to admin (is_staff=True). Only superusers can do this.",
+    responses={200: OpenApiResponse(description="User promoted to admin")}
+)
