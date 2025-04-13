@@ -89,6 +89,7 @@ THIRD_PARTY_APPS = [
     "allauth.socialaccount.providers.apple",
     "corsheaders",
     "drf_spectacular",
+    "channels",
 ]
 
 LOCAL_APPS = [
@@ -98,6 +99,9 @@ LOCAL_APPS = [
     "core.applications.cars",
     "core.applications.bookings",
     "core.applications.faq",
+    "core.applications.tickets",
+    "core.applications.chat",
+    "core.applications.policy",
     # Your stuff: custom apps go here
 ]
 # https://docs.djangoproject.com/en/dev/ref/settings/#installed-apps
@@ -379,7 +383,9 @@ SPECTACULAR_SETTINGS = {
     "DESCRIPTION": "Documentation of API endpoints of travelmate-backend",
     "VERSION": "1.0.0",
     "SERVE_PERMISSIONS": ["rest_framework.permissions.AllowAny"],
+    'SERVE_INCLUDE_SCHEMA': False,
     "SCHEMA_PATH_PREFIX": "/api/",
+
 
     # Now we can properly map enum names to importable classes
     'ENUM_NAME_OVERRIDES': {
@@ -401,10 +407,13 @@ SPECTACULAR_SETTINGS = {
 # ------------------------------------------------------------------------------
 
 API_VERSION = env("API_VERSION", default="v1")
+ASGI_APPLICATION = "config.asgi.application"
+
 
 CHANNEL_LAYERS = {
     "default": {
-        "BACKEND": "channels_redis.pubsub.RedisPubSubChannelLayer",
+        # "BACKEND": "channels_redis.pubsub.RedisPubSubChannelLayer",
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
             "hosts": env.list(
                 "CHANNEL_LAYERS_HOST",
