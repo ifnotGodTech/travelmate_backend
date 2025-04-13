@@ -379,35 +379,41 @@ class HotelApiViewSet(ViewSet):
 
 
 
-    @action(detail=False, methods=["get"], url_path="book-hotel")
+    @action(detail=False, methods=["post"], url_path="book-hotel")
     def book_hotel(self, request):
-        hotel_id = request.query_params.get('hotel_id')
-        check_in_date = request.query_params.get('check_in_date')
-        check_out_date = request.query_params.get('check_out_date')
-        guests_count = int(request.query_params.get('guests_count'))
+        """
+        Books a hotel based on a confirmed offer ID and guest details.
+        """
+        offer_id = request.data.get("offer_id")
+        guests = request.data.get("guests")
+        payments = request.data.get("payments")
 
-        # Check if all required parameters are provided
-        if not hotel_id or not check_in_date or not check_out_date or guests_count <= 0:
-            return Response({"error": "Missing or invalid parameters."}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Call the Amadeus API to book the hotel
-        try:
-            booking_response = amadeus_client.booking.hotel_bookings.post(
-                hotel_id=hotel_id,
-                check_in_date=check_in_date,
-                check_out_date=check_out_date,
-                guests_count=guests_count
+        if not offer_id or not guests or not payments:
+            return Response(
+                {"error": "Missing required booking parameters."},
+                status=status.HTTP_400_BAD_REQUEST
             )
 
-            # If booking is successful
-            if booking_response:
-                return Response(
-                    {"message": "Hotel booked successfully.", "data": booking_response.data},
-                    status=status.HTTP_200_OK
-                )
-            else:
-                return Response({"error": "Failed to book hotel."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        try:
+            # Compose the booking payload according to Amadeus API spec
+            payload = {
+                "data": {
+                    "offerId": offer_id,
+                    "guests": guests,
+                    "payments": payments
+                }
+            }
 
+            response = amadeus_client.booking.hotel_bookings.post(payload)
+
+            return Response({
+                "message": "Hotel booked successfully.",
+                "data": response.data
+            }, status=status.HTTP_200_OK)
+
+        except ResponseError as e:
+            logger.error(f"Amadeus Booking Error: {e}")
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            logger.error(f"Error booking hotel: {e}")
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.critical(f"Unexpected booking error: {e}", exc_info=True)
+            return Response({"error": "Internal server error."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
