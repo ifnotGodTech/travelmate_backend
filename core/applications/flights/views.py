@@ -1,6 +1,6 @@
 import json
 from django.conf import settings
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status, permissions
 from rest_framework.response import Response
 from rest_framework.permissions import IsAdminUser
 from rest_framework.decorators import permission_classes
@@ -817,6 +817,8 @@ class FlightSearchViewSet(viewsets.ViewSet):
     ViewSet for flight search operations
     """
 
+    permission_classes = [permissions.AllowAny]
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.amadeus_api = AmadeusAPI()
@@ -827,6 +829,7 @@ class FlightSearchViewSet(viewsets.ViewSet):
         Search for one-way flights
         """
         serializer = FlightSearchSerializer(data=request.data)
+
 
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

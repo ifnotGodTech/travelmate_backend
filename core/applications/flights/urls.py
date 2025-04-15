@@ -11,7 +11,7 @@ router.register(r'search', FlightSearchViewSet, basename='search')
 # router.register(r'admin/flight-bookings', FlightAdminViewSet, basename='admin-flight-bookings')
 
 urlpatterns = [
-    path('', include(router.urls)),
+    path('api/flights/', include(router.urls)),
     path('stripe-webhook/', stripe_webhook, name='stripe_webhook'),
 
 ]

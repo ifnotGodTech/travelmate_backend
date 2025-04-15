@@ -1,5 +1,5 @@
 from django.shortcuts import get_object_or_404
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status, permissions
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from django.utils.crypto import get_random_string
@@ -164,6 +164,7 @@ class CarCompanyViewSet(viewsets.ModelViewSet):
 @transfer_search_schema
 class TransferSearchViewSet(viewsets.ViewSet):
     serializer_class = TransferSearchSerializer
+    permission_classes = [permissions.AllowAny]
 
     @action(detail=False, methods=['post'])
     def search(self, request):

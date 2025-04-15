@@ -16,6 +16,6 @@ router.register(r'payments', PaymentViewSet)
 # router.register(r'admin/car-bookings', CarAdminViewSet, basename='admin-car-bookings')
 
 urlpatterns = [
-    path('', include(router.urls)),
+    path('api/cars/', include(router.urls)),
     path('webhooks/stripe/', stripe_webhook, name='stripe-webhook'),
 ]
