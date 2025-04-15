@@ -44,7 +44,7 @@ from rest_framework.viewsets import ViewSet
 from core.applications.users.models import AccountDeletionReason, Profile, User
 from core.applications.users.token import default_token_generator
 from core.helpers.custom_exceptions import CustomError
-from core.applications.users.api.serializers import AdminRegistrationSerializer, AdminUserDetailSerializer, AdminUserSerializer, CustomUserCreateSerializer, EmailAndTokenSerializer, EmailSubmissionSerializer, OTPVerificationSerializer, PasswordResetSerializer, PasswordRetypeSerializer, PasswordSetSerializer, ProfileSerializers, SetNewPasswordSerializer, UserDeleteSerializer, UserSerializer, VerifyOTPSerializer
+from core.applications.users.api.serializers import AdminRegistrationSerializer, AdminUserDetailSerializer, AdminUserSerializer, CustomUserCreateSerializer, EmailAndTokenSerializer, EmailSubmissionSerializer, OTPVerificationSerializer, PasswordResetSerializer, PasswordRetypeSerializer, PasswordSetSerializer, ProfileSerializers, SetNewPasswordSerializer, SuperUserTokenObtainPairSerializer, UserDeleteSerializer, UserSerializer, VerifyOTPSerializer
 from core.helpers.authentication import CustomJWTAuthentication
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -113,13 +113,13 @@ class TokenViewBase(generics.GenericAPIView):
         return Response(serializer.validated_data, status=status.HTTP_200_OK)
 
 
-# class TokenObtainPairView(TokenViewBase):
-#     """
-#     Takes a set of user credentials and returns an access and refresh JSON web
-#     token pair to prove the authentication of those credentials.
-#     """
+class TokenObtainPairView(TokenViewBase):
+    """
+    Takes a set of user credentials and returns an access and refresh JSON web
+    token pair to prove the authentication of those credentials.
+    """
 
-#     _serializer_class = api_settings.TOKEN_OBTAIN_SERIALIZER
+    _serializer_class = api_settings.TOKEN_OBTAIN_SERIALIZER
 
 
 # token_obtain_pair = TokenObtainPairView.as_view()
@@ -439,10 +439,17 @@ class UserRegistrationViewSet(BaseOTPRegistrationViewSet):
     is_admin = False
 
 
-@extend_schema(tags=["Admin Register with OTP"])
+@extend_schema(tags=["Superuser Register with OTP"])
 class AdminRegistrationViewSet(BaseOTPRegistrationViewSet):
     """Handles OTP-based admin registration."""
     is_admin = True
+
+@extend_schema(tags=["Superuser API for Login"])
+class SuperUserTokenObtainPairView(TokenObtainPairView):
+    """
+    TokenObtainPairView restricted to superusers only.
+    """
+    serializer_class = SuperUserTokenObtainPairSerializer
 
 
 @extend_schema(tags=["User"])
@@ -1308,7 +1315,7 @@ class AppleLoginView(SocialLoginView):
         return super().post(request, *args, **kwargs)
 
 
-@extend_schema(tags=["Admins Management"])
+@extend_schema(tags=["Superuser Management"])
 # class AdminUserViewSet(ModelViewSet):
 #     queryset = User.objects.all()
 #     serializer_class = AdminUserSerializer
@@ -1367,7 +1374,7 @@ class AppleLoginView(SocialLoginView):
 #         return response
 
 
-class AdminUserViewSet(viewsets.ModelViewSet):
+class SuperUserViewSet(viewsets.ModelViewSet):
     """
     ViewSet for managing admin users, including filtering, searching,
     exporting user data, and retrieving booking history.
@@ -1386,24 +1393,21 @@ class AdminUserViewSet(viewsets.ModelViewSet):
         return AdminUserSerializer
 
     def get_queryset(self):
-        """
-        Returns all users by default.
-        If `booking_type` is provided in query params, filters users based on booking type.
-        """
         queryset = super().get_queryset().annotate(
-            total_flight_bookings=Count("flight_bookings"),
-            total_car_bookings=Count("car_bookings"),
+            total_flight_bookings=Count("user_bookings__flight_booking", distinct=True),
+            total_car_bookings=Count("user_bookings__car_booking", distinct=True),
+            total_bookings=Count("user_bookings", distinct=True)
         )
 
         booking_type = self.request.query_params.get("booking_type")
 
-        if booking_type:
-            if booking_type == "flights":
-                queryset = queryset.filter(flight_bookings__isnull=False).distinct()
-            elif booking_type == "cars":
-                queryset = queryset.filter(car_bookings__isnull=False).distinct()
+        if booking_type == "flights":
+            queryset = queryset.filter(user_bookings__flight_booking__isnull=False).distinct()
+        elif booking_type == "cars":
+            queryset = queryset.filter(user_bookings__car_booking__isnull=False).distinct()
 
         return queryset
+
 
     @admin_list_user_schema
     def list(self, request, *args, **kwargs):
@@ -1457,42 +1461,42 @@ class AdminUserViewSet(viewsets.ModelViewSet):
 
         return response
 
-    @make_admin_schema
-    @action(detail=True, methods=["patch"], url_path="make-admin")
-    def make_admin(self, request, pk=None):
-        """
-        Promote a user to admin (set is_staff=True).
-        Only superusers can perform this action.
-        """
-        if not request.user.is_superuser:
-            return Response(
-                {
-                    "Status": 403,
-                    "Message": "You do not have permission to perform this action.",
-                    "Error": True
-                },
-                status=status.HTTP_403_FORBIDDEN
-            )
+    # @make_admin_schema
+    # @action(detail=True, methods=["patch"], url_path="make-admin")
+    # def make_admin(self, request, pk=None):
+    #     """
+    #     Promote a user to admin (set is_staff=True).
+    #     Only superusers can perform this action.
+    #     """
+    #     if not request.user.is_superuser:
+    #         return Response(
+    #             {
+    #                 "Status": 403,
+    #                 "Message": "You do not have permission to perform this action.",
+    #                 "Error": True
+    #             },
+    #             status=status.HTTP_403_FORBIDDEN
+    #         )
 
-        user = self.get_object()
-        if user.is_staff:
-            return Response(
-                {
-                    "Status": 400,
-                    "Message": "User is already an admin.",
-                    "Error": True
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
+    #     user = self.get_object()
+    #     if user.is_staff:
+    #         return Response(
+    #             {
+    #                 "Status": 400,
+    #                 "Message": "User is already an admin.",
+    #                 "Error": True
+    #             },
+    #             status=status.HTTP_400_BAD_REQUEST
+    #         )
 
-        user.is_staff = True
-        user.save()
+    #     user.is_staff = True
+    #     user.save()
 
-        return Response(
-            {
-                "Status": 200,
-                "Message": f"User '{user.email}' has been promoted to admin.",
-                "Error": False
-            },
-            status=status.HTTP_200_OK
-        )
+    #     return Response(
+    #         {
+    #             "Status": 200,
+    #             "Message": f"User '{user.email}' has been promoted to admin.",
+    #             "Error": False
+    #         },
+    #         status=status.HTTP_200_OK
+    #     )

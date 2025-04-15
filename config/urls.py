@@ -45,6 +45,7 @@ urlpatterns += [
     path("api/", include("config.api_router")),
     # DRF auth token
     path("api/auth/", include("core.applications.users.api.jwt")),
+    path("api/auth/", include("core.applications.users.api.jwt_superuser")),
     path("api/", include("core.applications.users.api.routers", namespace="users")),
     path("api/", include("core.applications.stay.api.stay_routers", namespace="stay")),
     path("api/", include("core.applications.bookings.urls", namespace="bookings")),

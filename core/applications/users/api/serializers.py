@@ -284,11 +284,11 @@ class VerifiedEmailSerializer(serializers.Serializer):
             ) from e
 
         # Check if the user is a superuser
-        if self.user.is_superuser:
-            raise CustomError.BadRequest(
-                {"email": self.error_messages["superuser_not_allowed"]},
-                code="superuser_not_allowed"
-            )
+        # if self.user.is_superuser:
+        #     raise CustomError.BadRequest(
+        #         {"email": self.error_messages["superuser_not_allowed"]},
+        #         code="superuser_not_allowed"
+        #     )
 
         return attrs
 
@@ -721,3 +721,18 @@ class AdminUserDetailSerializer(AdminUserSerializer):
             "base_transfer_cost",
             "service_fee",
         )
+
+
+
+
+class SuperUserTokenObtainPairSerializer(TokenObtainPairSerializer):
+    """
+    Custom serializer to restrict JWT login to superusers only.
+    """
+    def validate(self, attrs):
+        data = super().validate(attrs)
+        if not self.user.is_superuser:
+            raise serializers.ValidationError(
+                "Only superusers are allowed to authenticate."
+            )
+        return data
