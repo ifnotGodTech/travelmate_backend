@@ -188,6 +188,13 @@ class TransferSearchViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        # Validate required parameters
+        if not all([pickup_location, pickup_date, pickup_time]):
+            return Response(
+                {'error': 'Missing required parameters: pickup_location, pickup_date, pickup_time'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         # For city destinations, we need an address
         if not data.get('end_address') and not dropoff_location.isalpha():
             return Response(
@@ -238,6 +245,16 @@ class TransferSearchViewSet(viewsets.ViewSet):
         try:
             # Parse datetime
             pickup_datetime = datetime.strptime(f"{pickup_date} {pickup_time}", "%Y-%m-%d %H:%M")
+
+            # Get current datetime
+            now = datetime.now()
+
+            # Check if the pickup datetime is in the past
+            if pickup_datetime < now:
+                return Response(
+                    {'error': 'Pickup date and time cannot be in the past'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
             # Search transfers via Amadeus API
             transfers = amadeus_service.search_transfers(

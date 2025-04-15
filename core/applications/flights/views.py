@@ -823,6 +823,15 @@ class FlightSearchViewSet(viewsets.ViewSet):
         super().__init__(**kwargs)
         self.amadeus_api = AmadeusAPI()
 
+    def _validate_date_not_in_past(self, date):
+        """
+        Helper method to validate that a date is not in the past
+        """
+        today = datetime.now().date()
+        if date < today:
+            return False
+        return True
+
     @action(detail=False, methods=['post'])
     def one_way(self, request):
         """
@@ -839,6 +848,14 @@ class FlightSearchViewSet(viewsets.ViewSet):
             origin = serializer.validated_data['origin']
             destination = serializer.validated_data['destination']
             departure_date = serializer.validated_data['departure_date']
+
+            # Validate departure date is not in the past
+            if not self._validate_date_not_in_past(departure_date):
+                return Response(
+                    {"error": "Departure date cannot be in the past"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
             adults = serializer.validated_data.get('adults', 1)
             travel_class = serializer.validated_data.get('travel_class', 'ECONOMY')
             non_stop = serializer.validated_data.get('non_stop', False)
@@ -908,6 +925,20 @@ class FlightSearchViewSet(viewsets.ViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
+            # Validate departure date is not in the past
+            if not self._validate_date_not_in_past(departure_date):
+                return Response(
+                    {"error": "Departure date cannot be in the past"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Validate return date is not before departure date
+            if return_date < departure_date:
+                return Response(
+                    {"error": "Return date cannot be before departure date"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
             adults = serializer.validated_data.get('adults', 1)
             travel_class = serializer.validated_data.get('travel_class', 'ECONOMY')
             non_stop = serializer.validated_data.get('non_stop', False)
@@ -961,6 +992,16 @@ class FlightSearchViewSet(viewsets.ViewSet):
         try:
             # Extract data from request
             segments = serializer.validated_data['segments']
+
+            # Validate all departure dates
+            today = datetime.now().date()
+            for i, segment in enumerate(segments):
+                if segment['departure_date'] < today:
+                    return Response(
+                        {"error": f"Departure date for segment {i+1} cannot be in the past"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
             adults = serializer.validated_data.get('adults', 1)
             travel_class = serializer.validated_data.get('travel_class', 'ECONOMY')
             currency = serializer.validated_data.get('currency', 'USD')
