@@ -1,5 +1,5 @@
 from django.shortcuts import get_object_or_404
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status, permissions
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from django.utils.crypto import get_random_string
@@ -164,6 +164,7 @@ class CarCompanyViewSet(viewsets.ModelViewSet):
 @transfer_search_schema
 class TransferSearchViewSet(viewsets.ViewSet):
     serializer_class = TransferSearchSerializer
+    permission_classes = [permissions.AllowAny]
 
     @action(detail=False, methods=['post'])
     def search(self, request):
@@ -179,6 +180,13 @@ class TransferSearchViewSet(viewsets.ViewSet):
         pickup_time = data.get('pickup_time')
         passengers = data.get('passengers', 1)  # Make passengers optional with default value of 1
         transfer_type = data.get('transfer_type', 'PRIVATE')
+
+        # Validate required parameters
+        if not all([pickup_location, pickup_date, pickup_time]):
+            return Response(
+                {'error': 'Missing required parameters: pickup_location, pickup_date, pickup_time'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         # Validate required parameters
         if not all([pickup_location, pickup_date, pickup_time]):
@@ -237,6 +245,16 @@ class TransferSearchViewSet(viewsets.ViewSet):
         try:
             # Parse datetime
             pickup_datetime = datetime.strptime(f"{pickup_date} {pickup_time}", "%Y-%m-%d %H:%M")
+
+            # Get current datetime
+            now = datetime.now()
+
+            # Check if the pickup datetime is in the past
+            if pickup_datetime < now:
+                return Response(
+                    {'error': 'Pickup date and time cannot be in the past'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
             # Search transfers via Amadeus API
             transfers = amadeus_service.search_transfers(
