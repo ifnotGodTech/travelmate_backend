@@ -44,7 +44,7 @@ from rest_framework.viewsets import ViewSet
 from core.applications.users.models import AccountDeletionReason, Profile, User
 from core.applications.users.token import default_token_generator
 from core.helpers.custom_exceptions import CustomError
-from core.applications.users.api.serializers import AdminRegistrationSerializer, AdminUserDetailSerializer, AdminUserSerializer, CustomUserCreateSerializer, EmailAndTokenSerializer, EmailSubmissionSerializer, OTPVerificationSerializer, PasswordRetypeSerializer, PasswordSetSerializer, ProfileSerializers, SetNewPasswordSerializer, UserDeleteSerializer, UserSerializer, VerifyOTPSerializer
+from core.applications.users.api.serializers import AdminRegistrationSerializer, AdminUserDetailSerializer, AdminUserSerializer, CustomUserCreateSerializer, EmailAndTokenSerializer, EmailSubmissionSerializer, OTPVerificationSerializer, PasswordResetSerializer, PasswordRetypeSerializer, PasswordSetSerializer, ProfileSerializers, SetNewPasswordSerializer, UserDeleteSerializer, UserSerializer, VerifyOTPSerializer
 from core.helpers.authentication import CustomJWTAuthentication
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -854,16 +854,18 @@ class UserViewSet(ModelViewSet):
     @reset_password_schema
     @action(["post"], detail=False)
     def reset_password(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
+        serializer = PasswordResetSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+
         user = serializer.get_user()
+        context = {"user": user}
+        to = [get_user_email(user)]
+        settings.EMAIL.password_reset(self.request, context).send(to)
 
-        if user:
-            context = {"user": user}
-            to = [get_user_email(user)]
-            settings.EMAIL.password_reset(self.request, context).send(to)
-
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        return Response(
+            {"detail": "Password reset email has been sent."},
+            status=status.HTTP_200_OK
+        )
 
     # @reset_password_confirm_schema
     # @action(["post"], detail=False)

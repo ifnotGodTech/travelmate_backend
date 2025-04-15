@@ -1,5 +1,6 @@
 import json
 from core.amadeus import amadeus_client
+from core.amadeus.amadeus_client2 import BookingAmadeusClient
 from core.helpers.enums import GenderChoice
 from rest_framework import  status
 from rest_framework.viewsets import ViewSet
@@ -10,6 +11,7 @@ from core.applications.stay.api.schemas import (
     comprehensive_search_schema, list_hotel_schema, hotel_availability_schema,
     property_info_schema
 )
+from django.utils import timezone
 from typing import Optional
 from datetime import datetime, timedelta
 from django.core.exceptions import ValidationError
@@ -381,39 +383,77 @@ class HotelApiViewSet(ViewSet):
 
     @action(detail=False, methods=["post"], url_path="book-hotel")
     def book_hotel(self, request):
-        """
-        Books a hotel based on a confirmed offer ID and guest details.
-        """
         offer_id = request.data.get("offer_id")
         guests = request.data.get("guests")
         payments = request.data.get("payments")
 
-        if not offer_id or not guests or not payments:
+        if not all([offer_id, guests, payments]):
+            logger.warning("Missing booking parameters", extra={"request_data": request.data})
             return Response(
-                {"error": "Missing required booking parameters."},
+                {
+                    "error": "Missing required parameters",
+                    "required_fields": ["offer_id", "guests", "payments"],
+                    "received": {k: v is not None for k, v in request.data.items()}
+                },
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        def attempt_booking():
+            client = BookingAmadeusClient().get_client()
+            # ✅ Use positional arguments, NOT keyword arguments
+            return client.booking.hotel_bookings.post(
+                [{"id": offer_id}],  # hotel_offers as first argument
+                guests,              # second: guests
+                payments             # third: payments
+            )
+
         try:
-            # Compose the booking payload according to Amadeus API spec
-            payload = {
-                "data": {
-                    "offerId": offer_id,
-                    "guests": guests,
-                    "payments": payments
-                }
-            }
+            response = attempt_booking()
 
-            response = amadeus_client.booking.hotel_bookings.post(payload)
-
+            logger.info("Hotel booking successful", extra={"offer_id": offer_id, "guest_count": len(guests)})
             return Response({
-                "message": "Hotel booked successfully.",
-                "data": response.data
+                "message": "Hotel booked successfully",
+                "data": response.data,
+                "booking_reference": response.result.get("bookingId")
             }, status=status.HTTP_200_OK)
 
         except ResponseError as e:
-            logger.error(f"Amadeus Booking Error: {e}")
-            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            if getattr(e, 'code', None) == 38190:
+                logger.info("Access token expired, retrying...")
+                # Try to refresh the access token and make the booking again
+                try:
+                    # Re-initialize the Amadeus client and retry the booking
+                    client = BookingAmadeusClient()
+                    client.client = client._initialize_client()  # Refresh the client with new credentials
+                    response = attempt_booking()
+
+                    logger.info("Hotel booked after token refresh", extra={"offer_id": offer_id})
+                    return Response({
+                        "message": "Hotel booked successfully after token refresh",
+                        "data": response.data,
+                        "booking_reference": response.result.get("bookingId")
+                    }, status=status.HTTP_200_OK)
+
+                except Exception as retry_error:
+                    logger.error("Retry failed after token refresh", exc_info=True)
+                    return Response({
+                        "error": "Booking failed after token refresh",
+                        "details": str(retry_error)
+                    }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+            logger.error("Amadeus API error during booking", extra={
+                "offer_id": offer_id,
+                "error_details": str(e)
+            })
+            return Response({
+                "error": "Amadeus API booking failure",
+                "details": str(e)
+            }, status=getattr(e.response, 'status_code', status.HTTP_400_BAD_REQUEST))
+
         except Exception as e:
-            logger.critical(f"Unexpected booking error: {e}", exc_info=True)
-            return Response({"error": "Internal server error."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.critical("Unexpected error during hotel booking", exc_info=True)
+            return Response({
+                "error": "Internal booking system error",
+                "reference_id": f"ERR-{timezone.now().timestamp()}",
+                "contact_support": True
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
