@@ -25,8 +25,8 @@ urlpatterns = [
     path("users/", include("core.applications.users.urls", namespace="users")),
     path("accounts/", include("allauth.urls")),
     # Your stuff: custom urls includes go here
-    path("flights/", include("core.applications.flights.urls", namespace="flights")),
-    path("cars/", include("core.applications.cars.urls", namespace="cars")),
+    path("", include("core.applications.flights.urls", namespace="flights")),
+    path("", include("core.applications.cars.urls", namespace="cars")),
     path("", include("core.applications.tickets.urls", namespace="tickets")),
     path("", include("core.applications.faq.urls", namespace="faq")),
     path("", include("core.applications.chat.urls", namespace="chat")),
