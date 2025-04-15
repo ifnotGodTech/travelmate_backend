@@ -137,3 +137,29 @@ def book_hotel_room(user, offer_id):
     except ResponseError as e:
         logger.error(f"Booking error: {str(e)}", exc_info=True)
         return {"error": str(e)}
+
+
+def fetch_hotel_reviews(hotel_id):
+    """
+    Fetch reviews for a specific hotel from the Amadeus API.
+
+    :param hotel_id: The ID of the hotel for which reviews are to be fetched.
+    :return: A list of reviews or an error message.
+    """
+    try:
+        # Get the Amadeus client
+        amadeus = amadeus_client
+
+        # Fetch reviews for the hotel using the Amadeus API
+        response = amadeus.reference_data.locations.hotels.reviews.get(hotelId=hotel_id)
+
+        # Check if the response contains reviews and return them
+        if response.data:
+            return response.data
+        else:
+            return {"error": "No reviews found for this hotel."}
+
+    except Exception as e:
+        # Log any exceptions and return an error message
+        logger.error(f"Error fetching hotel reviews: {e}", exc_info=True)
+        return {"error": "An error occurred while fetching reviews."}

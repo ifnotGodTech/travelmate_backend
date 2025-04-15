@@ -1,16 +1,17 @@
 import json
 from core.amadeus import amadeus_client
+from core.amadeus.amadeus_client2 import BookingAmadeusClient
 from core.helpers.enums import GenderChoice
 from rest_framework import  status
 from rest_framework.viewsets import ViewSet
 
-from core.amadeus.amadeus_services import  book_hotel_room, fetch_hotel_details, list_or_fetch_hotels_by_city, search_hotels
+from core.amadeus.amadeus_services import  book_hotel_room, fetch_hotel_details, fetch_hotel_reviews, list_or_fetch_hotels_by_city, search_hotels
 from rest_framework.response import Response
 from core.applications.stay.api.schemas import (
-    search_hotel_schema, detail_schema, check_availability_schema,
-    room_per_hotel_schema, book_hotel_schema, city_search_schema,
-    list_hotel_schema
+    comprehensive_search_schema, list_hotel_schema, hotel_availability_schema,
+    property_info_schema
 )
+from django.utils import timezone
 from typing import Optional
 from datetime import datetime, timedelta
 from django.core.exceptions import ValidationError
@@ -71,7 +72,7 @@ class HotelApiViewSet(ViewSet):
         )
 
     # --- Availability Endpoints ---
-    @search_hotel_schema
+    @hotel_availability_schema
     @action(detail=False, methods=["get"], url_path="availability")
     def check_availability(self, request):
         """
@@ -113,7 +114,7 @@ class HotelApiViewSet(ViewSet):
         )
 
     # --- Property Information Endpoints ---
-    @detail_schema
+    @property_info_schema
     @action(detail=False, methods=["get"], url_path="property-info")
     def get_property_info(self, request):
         """
@@ -146,6 +147,7 @@ class HotelApiViewSet(ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @comprehensive_search_schema
     @action(detail=False, methods=["get"], url_path="full-search")
     def comprehensive_search(self, request):
         """
@@ -260,17 +262,59 @@ class HotelApiViewSet(ViewSet):
         }
 
     def _parse_hotel_ids(self, request):
-        """Convert hotel_ids query param to Amadeus format"""
-        if ids := request.query_params.get('hotel_ids'):
-            return ",".join([id.strip() for id in ids.split(',')])
-        return None
+        hotel_ids_param = request.query_params.get('hotel_ids')
+        if not hotel_ids_param:
+            return None
+
+        ids = [id.strip() for id in hotel_ids_param.split(',') if id.strip()]
+        if not ids:
+            return None
+
+        return ",".join(ids)
 
     def _execute_amadeus_request(self, params):
-        """Route to appropriate Amadeus endpoint"""
-        if 'hotelIds' in params and params['hotelIds']:
-            return amadeus_client.shopping.hotel_offers_by_hotel.get(**params)
-        else:
+        # Check for hotelIds (for specific hotels search)
+        if "hotelIds" in params:
             return amadeus_client.shopping.hotel_offers_search.get(**params)
+
+        # Check for cityCode (for city-based hotel search)
+        elif "cityCode" in params:
+            return amadeus_client.shopping.hotel_offers_search.get(**params)
+
+        # Check for latitude and longitude (for geo-based hotel search)
+        elif "latitude" in params and "longitude" in params:
+            return amadeus_client.shopping.hotel_offers_search.get(**params)
+
+        # Raise an error if none of the parameters are present
+        else:
+            raise ValueError("Invalid search mode — please provide hotelIds, cityCode, or lat/lon")
+
+
+    def _format_response(self, data):
+        """
+        Format the response data returned by the Amadeus API.
+        This method assumes that data can either be a list or a dictionary.
+        """
+        # Check if the data is a list or a dictionary and format accordingly
+        if isinstance(data, list):
+            # If it's a list, return the list as is, or modify the structure if needed
+            formatted_data = {
+                "hotels": data,  # Assuming `data` is the list of hotels
+                "total_count": len(data)  # You can modify this based on the actual response
+            }
+        elif isinstance(data, dict):
+            # If it's a dictionary, access keys like normal
+            formatted_data = {
+                "hotels": data.get("hotels", []),  # Assuming `hotels` is a key in the response
+                "total_count": data.get("total_count", 0)
+            }
+        else:
+            # Handle other unexpected formats or raise an error
+            formatted_data = {
+                "error": "Unexpected response format"
+            }
+
+        return formatted_data
 
 
     def _parse_amadeus_error(self, error):
@@ -301,3 +345,115 @@ class HotelApiViewSet(ViewSet):
             raise ValidationError("Minimum price cannot exceed maximum price")
 
         return f"{int(min_price)}:{int(max_price)}"
+
+    # @fetch_review_schema
+    @action(detail=True, methods=["get"], url_path="reviews")
+    def get_hotel_reviews(self, request, pk=None):
+        """
+        Fetch reviews for a specific hotel based on hotel_id.
+        """
+        hotel_id = pk  # 'pk' comes from the URL path (e.g., /api/hotels/reviews/{hotel_id}/)
+
+        if not hotel_id:
+            return Response(
+                {"error": "hotel_id is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            reviews = fetch_hotel_reviews(hotel_id)  # Assuming this function interacts with the Amadeus API
+            return Response(
+                reviews,
+                status=status.HTTP_200_OK
+            )
+        except ResponseError as amadeus_error:
+            logger.error(f"Amadeus API Error: {amadeus_error}")
+            return Response(
+                {"error": str(amadeus_error)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.error(f"Error in get_hotel_reviews: {str(e)}", exc_info=True)
+            return Response(
+                {"error": "Internal server error"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+
+    @action(detail=False, methods=["post"], url_path="book-hotel")
+    def book_hotel(self, request):
+        offer_id = request.data.get("offer_id")
+        guests = request.data.get("guests")
+        payments = request.data.get("payments")
+
+        if not all([offer_id, guests, payments]):
+            logger.warning("Missing booking parameters", extra={"request_data": request.data})
+            return Response(
+                {
+                    "error": "Missing required parameters",
+                    "required_fields": ["offer_id", "guests", "payments"],
+                    "received": {k: v is not None for k, v in request.data.items()}
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        def attempt_booking():
+            client = BookingAmadeusClient().get_client()
+            # ✅ Use positional arguments, NOT keyword arguments
+            return client.booking.hotel_bookings.post(
+                [{"id": offer_id}],  # hotel_offers as first argument
+                guests,              # second: guests
+                payments             # third: payments
+            )
+
+        try:
+            response = attempt_booking()
+
+            logger.info("Hotel booking successful", extra={"offer_id": offer_id, "guest_count": len(guests)})
+            return Response({
+                "message": "Hotel booked successfully",
+                "data": response.data,
+                "booking_reference": response.result.get("bookingId")
+            }, status=status.HTTP_200_OK)
+
+        except ResponseError as e:
+            if getattr(e, 'code', None) == 38190:
+                logger.info("Access token expired, retrying...")
+                # Try to refresh the access token and make the booking again
+                try:
+                    # Re-initialize the Amadeus client and retry the booking
+                    client = BookingAmadeusClient()
+                    client.client = client._initialize_client()  # Refresh the client with new credentials
+                    response = attempt_booking()
+
+                    logger.info("Hotel booked after token refresh", extra={"offer_id": offer_id})
+                    return Response({
+                        "message": "Hotel booked successfully after token refresh",
+                        "data": response.data,
+                        "booking_reference": response.result.get("bookingId")
+                    }, status=status.HTTP_200_OK)
+
+                except Exception as retry_error:
+                    logger.error("Retry failed after token refresh", exc_info=True)
+                    return Response({
+                        "error": "Booking failed after token refresh",
+                        "details": str(retry_error)
+                    }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+            logger.error("Amadeus API error during booking", extra={
+                "offer_id": offer_id,
+                "error_details": str(e)
+            })
+            return Response({
+                "error": "Amadeus API booking failure",
+                "details": str(e)
+            }, status=getattr(e.response, 'status_code', status.HTTP_400_BAD_REQUEST))
+
+        except Exception as e:
+            logger.critical("Unexpected error during hotel booking", exc_info=True)
+            return Response({
+                "error": "Internal booking system error",
+                "reference_id": f"ERR-{timezone.now().timestamp()}",
+                "contact_support": True
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

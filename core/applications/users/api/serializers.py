@@ -174,6 +174,24 @@ class GetUser(serializers.ModelSerializer):
             "name",
         )
 
+class PasswordResetSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+    def validate_email(self, value):
+        try:
+            user = User.objects.get(email=value)
+        except User.DoesNotExist:
+            raise serializers.ValidationError({
+                "Status": 400,
+                "Message": "No account is associated with this email.",
+                "Error": True
+            })
+        self.user = user
+        return value
+
+
+    def get_user(self):
+        return getattr(self, "user", None)
 
 class EmailAndTokenSerializer(serializers.Serializer):
     email = serializers.EmailField()

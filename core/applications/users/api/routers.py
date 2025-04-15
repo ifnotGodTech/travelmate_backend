@@ -28,7 +28,7 @@ router.register(
 
 
 router.register("profile", ProfileViewSet, basename="profile")
-router.register("admin", AdminUserViewSet, basename="admin")
+router.register("admin", AdminUserViewSet, basename="admin-users")
 
 app_name = f"{PREFIX}"
 urlpatterns = router.urls
