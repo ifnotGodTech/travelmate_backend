@@ -889,6 +889,26 @@ class UserViewSet(ModelViewSet):
 
     #     return Response(status=status.HTTP_204_NO_CONTENT)
 
+    @action(["post"], detail=False, permission_classes=[AllowAny])
+    def resend_reset_token(self, request, *args, **kwargs):
+        serializer = PasswordResetSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        user = serializer.get_user()
+        context = {"user": user}
+        to = [get_user_email(user)]
+
+        settings.EMAIL.password_reset(self.request, context).send(to)
+
+        return Response(
+            {
+                "Status": 200,
+                "Message": "Password reset email has been sent.",
+                "Error": False
+            },
+            status=status.HTTP_200_OK
+        )
+
     @validate_password_reset_token_schema
     @action(methods=["post"], detail=False,
             permission_classes=[AllowAny])
