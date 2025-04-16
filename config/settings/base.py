@@ -519,6 +519,11 @@ SOCIALACCOUNT_PROVIDERS = {
     "google": {
         "SCOPE": ["profile", "email"],
         "AUTH_PARAMS": {"access_type": "online"},
+        "APP": {
+            "client_id": env("GOOGLE_CLIENT_ID"),
+            "secret": env("GOOGLE_CLIENT_SECRET"),
+            "key": env("GOOGLE_API_KEY"),
+        }
     },
     "facebook": {
         "SCOPE": ["email", "public_profile"],
