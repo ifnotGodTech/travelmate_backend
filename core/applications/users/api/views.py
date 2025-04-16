@@ -70,6 +70,7 @@ from drf_spectacular.utils import (
     OpenApiResponse,
     OpenApiExample,
 )
+from rest_framework.exceptions import AuthenticationFailed
 
 logger = logging.getLogger(__name__)
 
@@ -304,20 +305,17 @@ class BaseOTPRegistrationViewSet(ViewSet):
 
             if User.objects.filter(email=email).exists():
                 return Response(
-                    # {"message": "A user with this email is already registered."},
                     {
                         "Status": 400,
                         "Message": "A user with this email is already registered.",
                         "Error": True
                     },
-
-                    status=status.HTTP_307_TEMPORARY_REDIRECT
+                    status=status.HTTP_400_BAD_REQUEST
                 )
 
             otp = self.generate_otp(email)
             self.send_otp_email(request, email, otp)
             return Response(
-                # {"message": "OTP sent to your email."}
                 {
                     "Status": 200,
                     "Message": "OTP sent to your email.",
@@ -338,7 +336,6 @@ class BaseOTPRegistrationViewSet(ViewSet):
 
             if self.validate_otp(email, otp):
                 return Response(
-                    # {"message": "OTP verified. Proceed to set your password."}
                     {
                         "Status": 200,
                         "Message": "OTP verified. Proceed to set your password.",
@@ -348,7 +345,6 @@ class BaseOTPRegistrationViewSet(ViewSet):
                 )
 
             return Response(
-                # {"error": "Invalid or expired OTP."}
                 {
                     "Status": 400,
                     "Message": "Invalid or expired OTP.",
@@ -366,26 +362,15 @@ class BaseOTPRegistrationViewSet(ViewSet):
         if serializer.is_valid():
             email = serializer.validated_data["email"]
 
-            if not User.objects.filter(email=email).exists():
-                return Response(
-                    # {"error": "User not found with this email."}
-                    {
-                        "Status": 400,
-                        "Message": "User not found with this email.",
-                        "Error": True
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
             otp = self.generate_otp(email)
             self.send_otp_email(request, email, otp)
             return Response(
-                # {"message": "A new OTP has been sent to your email."}
                 {
                     "Status": 200,
                     "Message": "A new OTP has been sent to your email.",
                     "Error": False
-                }, status=status.HTTP_200_OK
+                },
+                status=status.HTTP_200_OK
             )
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -399,7 +384,6 @@ class BaseOTPRegistrationViewSet(ViewSet):
 
             if not cache.get(f"{email}_verified"):
                 return Response(
-                    # {"error": "OTP not verified or expired."}
                     {
                         "Status": 400,
                         "Message": "OTP not verified or expired.",
@@ -423,23 +407,24 @@ class BaseOTPRegistrationViewSet(ViewSet):
             return Response(
                 {
                     "Status": 201,
-                    "message": "Admin account created successfully." if self.is_admin else "Password set successfully.",
-                    "tokens": tokens,
+                    "Message": "Admin account created successfully." if self.is_admin else "Password set successfully.",
+                    "Error": False,
+                    "tokens": tokens
                 },
-                status=status.HTTP_201_CREATED,
+                status=status.HTTP_201_CREATED
             )
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 
-@extend_schema(tags=["User Register with OTP"])
+@extend_schema(tags=["1. User Register with OTP"])
 class UserRegistrationViewSet(BaseOTPRegistrationViewSet):
     """Handles OTP-based user registration."""
     is_admin = False
 
 
-@extend_schema(tags=["Superuser Register with OTP"])
+@extend_schema(tags=["2. Superuser Register with OTP"])
 class AdminRegistrationViewSet(BaseOTPRegistrationViewSet):
     """Handles OTP-based admin registration."""
     is_admin = True
@@ -450,9 +435,20 @@ class SuperUserTokenObtainPairView(TokenObtainPairView):
     TokenObtainPairView restricted to superusers only.
     """
     serializer_class = SuperUserTokenObtainPairSerializer
+    def post(self, request, *args, **kwargs):
+        try:
+            return super().post(request, *args, **kwargs)
+        except AuthenticationFailed as exc:
+            return Response(
+                {
+                    "Error": 400,
+                    "Message": str(exc)
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
 
-@extend_schema(tags=["User"])
+@extend_schema(tags=["3. Other Users Processes"])
 @extend_schema_view(
     me=extend_schema(
         methods=["GET"],
