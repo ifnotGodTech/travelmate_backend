@@ -43,15 +43,15 @@ urlpatterns = [
          name='admin-ticket-message-list'),
 ]
 
-# Print all registered routes
-print("\n=== REGISTERED API ROUTES ===")
-print("\nREGULAR USER ROUTES (with api/ added at root):")
-for route in user_router.urls:
-    print(f"  /api/{route.pattern}")
-print("  /api/tickets/<int:ticket_pk>/messages/")
+# # Print all registered routes
+# print("\n=== REGISTERED API ROUTES ===")
+# print("\nREGULAR USER ROUTES (with api/ added at root):")
+# for route in user_router.urls:
+#     print(f"  /api/{route.pattern}")
+# print("  /api/tickets/<int:ticket_pk>/messages/")
 
-print("\nADMIN ROUTES (with api/ added at root):")
-for route in admin_router.urls:
-    print(f"  /api/admin/{route.pattern}")
-print("  /api/admin/tickets/<int:ticket_pk>/messages/")
-print("\n=============================\n")
+# print("\nADMIN ROUTES (with api/ added at root):")
+# for route in admin_router.urls:
+#     print(f"  /api/admin/{route.pattern}")
+# print("  /api/admin/tickets/<int:ticket_pk>/messages/")
+# print("\n=============================\n")

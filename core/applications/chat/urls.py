@@ -6,7 +6,7 @@ app_name = "chat"
 
 router = DefaultRouter()
 # User routes
-router.register(r'user/chats', views.UserChatSessionViewSet, basename='user-chat')
+router.register(r'api/user/chats', views.UserChatSessionViewSet, basename='user-chat')
 # Admin routes
 router.register(r'api/admin/chats', views.AdminChatSessionViewSet, basename='admin-chat')
 # Common routes
