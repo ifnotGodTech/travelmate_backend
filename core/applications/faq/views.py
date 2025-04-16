@@ -34,6 +34,7 @@ class FAQCategoryReadOnlyViewSet(mixins.ListModelMixin,
                                  viewsets.GenericViewSet):
     queryset = FAQCategory.objects.all()
     serializer_class = FAQCategorySerializer
+    permission_classes = [permissions.AllowAny]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['name', 'description']
     ordering_fields = ['order', 'name']
@@ -74,6 +75,7 @@ class FAQReadOnlyViewSet(mixins.ListModelMixin,
                          viewsets.GenericViewSet):
     queryset = FAQ.objects.filter(is_active=True)
     serializer_class = FAQSerializer
+    permission_classes = [permissions.AllowAny]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['question', 'answer', 'category__name']
     ordering_fields = ['order', 'views', 'created_at', 'updated_at']

@@ -23,5 +23,5 @@ app_name = 'policy'
 
 urlpatterns = [
     path('api/admin/', include(admin_router.urls)),
-    path('', include(user_router.urls)),
+    path('api/', include(user_router.urls)),
 ]

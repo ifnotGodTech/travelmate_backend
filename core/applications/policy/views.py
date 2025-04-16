@@ -136,6 +136,7 @@ class UserAboutUsViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, views
     """
     queryset = AboutUs.objects.all().order_by('-updated_at')
     serializer_class = AboutUsSerializer
+    permission_classes = [permissions.AllowAny]
 
     def list(self, request):
         about_us = AboutUs.objects.order_by('-updated_at').first()
@@ -154,6 +155,8 @@ class UserPrivacyPolicyViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin,
     """
     queryset = PrivacyPolicy.objects.all().order_by('-last_updated')
     serializer_class = PrivacyPolicySerializer
+    permission_classes = [permissions.AllowAny]
+
 
     def list(self, request):
         privacy_policy = PrivacyPolicy.objects.order_by('-last_updated').first()
@@ -172,6 +175,8 @@ class UserTermsOfUseViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, vi
     """
     queryset = TermsOfUse.objects.all().order_by('-last_updated')
     serializer_class = TermsOfUseSerializer
+    permission_classes = [permissions.AllowAny]
+
 
     def list(self, request):
         terms_of_use = TermsOfUse.objects.order_by('-last_updated').first()
@@ -190,6 +195,7 @@ class UserPartnerViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, views
     """
     queryset = Partner.objects.filter(is_active=True)
     serializer_class = PartnerSerializer
+    permission_classes = [permissions.AllowAny]
 
     def get_queryset(self):
         queryset = Partner.objects.filter(is_active=True)
