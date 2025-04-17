@@ -757,7 +757,7 @@ class UserViewSet(ModelViewSet):
         self.perform_destroy(instance)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
-    @action(["get", "put", "patch", "delete"], detail=False)
+    @action(["get", "put", "patch", "delete", "options"], detail=False)
     def me(self, request, *args, **kwargs):
         """
         Handle authenticated user profile operations:
