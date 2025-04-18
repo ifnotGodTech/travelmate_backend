@@ -56,8 +56,8 @@ class FAQCategoryReadOnlyViewSet(mixins.ListModelMixin,
                         value="FLIGHTS"
                     ),
                     OpenApiExample(
-                        "Hotels example",
-                        value="HOTELS"
+                        "Stays example",
+                        value="STAYS"
                     ),
                 ]
             )
