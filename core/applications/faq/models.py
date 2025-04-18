@@ -6,7 +6,7 @@ User = get_user_model()
 class FAQCategory(models.Model):
     CATEGORY_CHOICES = [
         ('FLIGHTS', 'Flights'),
-        ('HOTELS', 'Hotels'),
+        ('STAYS', 'Stays'),
         ('CAR_RENTALS', 'Car Rentals'),
         ('ACCOUNT', 'Account'),
     ]
