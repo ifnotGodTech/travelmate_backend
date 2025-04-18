@@ -1075,33 +1075,100 @@ class FlightSearchViewSet(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def search_airports(self, request):
         """
-        Search for airports
+        Search for cities and their airports with autocomplete support.
+        Example query: /api/flights/search-airports/?keyword=LAGOS&country=NG
+        Returns cities and their airports matching the search term.
         """
-        keyword = request.query_params.get('keyword')
+        keyword = request.query_params.get('keyword', '').strip()
+        country_code = request.query_params.get('country', '').strip()
 
-        if not keyword:
+        if not keyword or len(keyword) < 2:
             return Response(
-                {"error": "Keyword is required"},
+                {"error": "Please enter at least 2 characters"},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
         try:
-            # Search for airports
-            airports = self.amadeus_api.search_airports(
+            # Search for cities using Amadeus API
+            cities_data = self.amadeus_api.search_cities(
                 keyword=keyword,
-                subType=request.query_params.get('subType', 'AIRPORT'),
-                countryCode=request.query_params.get('countryCode'),
-                limit=int(request.query_params.get('limit', 10))
+                country_code=country_code if country_code else None,
+                max_results=10,
+                include='AIRPORTS'
             )
 
-            return Response(airports, status=status.HTTP_200_OK)
+            formatted_results = []
 
+            if 'data' in cities_data:
+                for city in cities_data['data']:
+                    city_name = city.get('name')
+                    country_code = city.get('address', {}).get('countryCode')
+
+                    # Add city itself
+                    city_item = {
+                        'id': city.get('iataCode'),  # Using iataCode as ID
+                        'name': city_name,
+                        'iataCode': city.get('iataCode'),
+                        'cityName': city_name,
+                        'countryCode': country_code,
+                        'countryName': self._get_country_name(country_code),  # Helper function needed
+                        'geoCode': city.get('geoCode'),
+                        'displayName': f"{city.get('iataCode')} - {city_name} ({self._get_country_name(country_code)})",
+                        'type': 'CITY'
+                    }
+                    formatted_results.append(city_item)
+
+                    # Process airports from relationships and included sections
+                    if 'relationships' in city and isinstance(city['relationships'], list):
+                        # Get airport info from included section
+                        airport_details = {}
+                        if 'included' in cities_data and 'airports' in cities_data['included']:
+                            airport_details = cities_data['included']['airports']
+
+                        for relationship in city['relationships']:
+                            if relationship.get('type') == 'Airport':
+                                airport_id = relationship.get('id')
+
+                                # Get detailed airport info if available
+                                airport_info = airport_details.get(airport_id, {})
+
+                                airport_item = {
+                                    'id': airport_id,
+                                    'name': airport_info.get('name', ''),
+                                    'iataCode': airport_info.get('iataCode', airport_id),
+                                    'cityName': city_name,
+                                    'countryCode': airport_info.get('address', {}).get('countryCode', country_code),
+                                    'countryName': self._get_country_name(country_code),
+                                    'geoCode': airport_info.get('geoCode'),
+                                    'displayName': f"{airport_info.get('iataCode', airport_id)} - {airport_info.get('name', '')} ({city_name})",
+                                    'type': 'AIRPORT'
+                                }
+                                formatted_results.append(airport_item)
+
+            return Response(formatted_results, status=status.HTTP_200_OK)
         except Exception as e:
             return Response(
                 {"error": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    def _get_country_name(self, country_code):
+        """
+        Convert country code to country name
+        You can implement this using a dictionary or another API call
+        """
+        if not country_code:
+            return None
+
+        # This is a simple example - you should replace with a complete mapping
+        country_map = {
+            'NG': 'Nigeria',
+            'US': 'United States',
+            'GB': 'United Kingdom',
+            'FR': 'France',
+            'DE': 'Germany',
+            # Add more as needed
+        }
 
     @action(detail=False, methods=['get'])
     def flight_details(self, request):

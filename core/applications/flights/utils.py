@@ -2,6 +2,7 @@ import requests
 from django.conf import settings
 from django.core.cache import cache
 from typing import Dict, List, Any, Optional
+import json
 
 class AmadeusAPI:
     """
@@ -255,42 +256,79 @@ class AmadeusAPI:
 
         return response.status_code == 200
 
-    def search_airports(self, keyword: str, subType: str = 'AIRPORT',
-                       countryCode: Optional[str] = None, limit: int = 10) -> Dict:
+    def search_airports(self, keyword, subType=None):
         """
-        Search for airports using Amadeus Airport & City Search API
-
-        Args:
-            keyword: Keyword to search for
-            subType: Type of location to search for (AIRPORT, CITY, CITY_AIRPORT)
-            countryCode: Country code to limit search to
-            limit: Maximum number of results to return
-
-        Returns:
-            Dict containing airport search results
+        Search for airports using the Amadeus API
         """
-        url = f"{self.base_url}/v1/reference-data/locations"
+        try:
+            print(f"[DEBUG] Searching airports with keyword: {keyword}, subType: {subType}")
+            print(f"[DEBUG] Base URL: {self.base_url}")
 
-        payload = {
-            'keyword': keyword,
-            'subType': subType,
-            'page[limit]': limit
-        }
+            headers = self._get_headers()
+            print(f"[DEBUG] Headers (truncated auth): {headers}")
 
-        if countryCode:
-            payload['countryCode'] = countryCode
+            params = {
+                'keyword': keyword,
+                'subType': ','.join(subType) if subType else 'AIRPORT,CITY'
+            }
+            print(f"[DEBUG] Request params: {params}")
 
-        response = requests.get(
-            url,
-            headers=self._get_headers(),
-            params=payload
-        )
+            response = requests.get(
+                f"{self.base_url}/v1/reference-data/locations",
+                headers=headers,
+                params=params
+            )
 
-        if response.status_code == 200:
+            print(f"[DEBUG] Amadeus API Status Code: {response.status_code}")
+            print(f"[DEBUG] Amadeus API Response Headers: {response.headers}")
+
+            if response.status_code != 200:
+                print(f"[DEBUG] Error response: {response.text}")
+
+            response_json = response.json()
+            print(f"[DEBUG] Response JSON: {json.dumps(response_json, indent=2)}")
+
+            return response_json
+        except json.JSONDecodeError as je:
+            print(f"[DEBUG] JSON Decode Error: {str(je)}")
+            print(f"[DEBUG] Raw response: {response.text}")
+            raise Exception(f"Error parsing Amadeus response: {str(je)}")
+        except requests.RequestException as re:
+            print(f"[DEBUG] Request Exception: {str(re)}")
+            raise Exception(f"Error connecting to Amadeus API: {str(re)}")
+        except Exception as e:
+            print(f"[DEBUG] Unexpected error: {str(e)}")
+            print(f"[DEBUG] Error type: {type(e).__name__}")
+            import traceback
+            print(f"[DEBUG] Traceback: {traceback.format_exc()}")
+            raise Exception(f"Error searching airports: {str(e)}")
+
+
+    def search_cities(self, keyword, country_code=None, max_results=10, include=None):
+        """
+        Search for cities and their airports using the Amadeus API
+        """
+        try:
+            params = {
+                'keyword': keyword,
+                'max': max_results
+            }
+
+            # Add optional parameters if provided
+            if country_code:
+                params['countryCode'] = country_code
+            if include:
+                params['include'] = include
+
+            response = requests.get(
+                f"{self.base_url}/v1/reference-data/locations/cities",
+                headers=self._get_headers(),
+                params=params
+            )
+
             return response.json()
-        else:
-            raise Exception(f"Failed to search airports: {response.text}")
-
+        except Exception as e:
+            raise Exception(f"Error searching cities: {str(e)}")
 
     def get_flight_details(self, flight_id: str) -> Dict:
         """
