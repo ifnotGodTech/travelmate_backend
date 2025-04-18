@@ -48,7 +48,7 @@ class FAQCategoryReadOnlyViewSet(mixins.ListModelMixin,
             OpenApiParameter(
                 name="category",
                 type=OpenApiTypes.STR,
-                description="Filter FAQs by category name (e.g. FLIGHTS, HOTELS, etc.)",
+                description="Filter FAQs by category name (e.g. FLIGHTS, STAYS, etc.)",
                 required=False,
                 examples=[
                     OpenApiExample(
@@ -56,8 +56,8 @@ class FAQCategoryReadOnlyViewSet(mixins.ListModelMixin,
                         value="FLIGHTS"
                     ),
                     OpenApiExample(
-                        "Hotels example",
-                        value="HOTELS"
+                        "Stays example",
+                        value="STAYS"
                     ),
                 ]
             )
