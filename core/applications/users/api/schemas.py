@@ -62,22 +62,15 @@ login_validate_password_schema = extend_schema(
 
 
 submit_email_schema = extend_schema(
-        summary="Step 1: Submit Email to Receive OTP",
-        description="User submits their email to receive an OTP for registration.",
-        request=EmailSubmissionSerializer,
-        responses={
-            200: OpenApiExample(
-                name="OTP Sent",
-                value={"message": "OTP sent to your email."},
-                response_only=True,
-            ),
-            400: OpenApiExample(
-                name="Invalid Email",
-                value={"error": "Invalid email format."},
-                response_only=True,
-            ),
-        },
-    )
+    summary="Step 1: Submit Email for OTP",
+    description="Submit an email to receive an OTP. If the email is already registered, a 307 response is returned indicating to proceed with login.",
+    request=EmailSubmissionSerializer,
+    responses={
+        200: OpenApiResponse(description="OTP sent to email."),
+        307: OpenApiResponse(description="Email already exists. Proceed with login."),
+        400: OpenApiResponse(description="Invalid email submission.")
+    }
+)
 
 
 set_password_schema = extend_schema(
@@ -101,7 +94,7 @@ set_password_schema = extend_schema(
 # Schema for verifying OTP and registering a standard user
 verify_otp_schema = extend_schema(
         summary="Step 2: Verify OTP",
-        description="User enters the OTP received in email to verify their account.",
+        description="Verify the OTP sent to the provided email. On success, allows the user to proceed with password setup.",
         request=OTPVerificationSerializer,
         responses={
             200: OpenApiExample(

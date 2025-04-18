@@ -306,11 +306,11 @@ class BaseOTPRegistrationViewSet(ViewSet):
             if User.objects.filter(email=email).exists():
                 return Response(
                     {
-                        "Status": 400,
-                        "Message": "A user with this email is already registered.",
+                        "Status": 307,
+                        "Message": "Enter your password to log in.",
                         "Error": True
                     },
-                    status=status.HTTP_400_BAD_REQUEST
+                    status=status.HTTP_307_TEMPORARY_REDIRECT
                 )
 
             otp = self.generate_otp(email)
@@ -375,14 +375,43 @@ class BaseOTPRegistrationViewSet(ViewSet):
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+
     @set_password_schema
     @action(detail=False, methods=["post"])
     def set_password(self, request):
         serializer = PasswordSetSerializer(data=request.data)
         if serializer.is_valid():
             email = serializer.validated_data["email"]
+            password = serializer.validated_data["password"]
 
-            if not cache.get(f"{email}_verified"):
+            user = User.objects.filter(email=email).first()
+            is_verified = cache.get(f"{email}_verified")
+
+            # CASE 1: User exists → this is login
+            if user and not is_verified:
+                if user.check_password(password):
+                    tokens = self.generate_tokens(user)
+                    return Response(
+                        {
+                            "Status": 200,
+                            "Message": "Login successful.",
+                            "Error": False,
+                            "tokens": tokens
+                        },
+                        status=status.HTTP_200_OK
+                    )
+                else:
+                    return Response(
+                        {
+                            "Status": 401,
+                            "Message": "Incorrect password.",
+                            "Error": True
+                        },
+                        status=status.HTTP_401_UNAUTHORIZED
+                    )
+
+            # CASE 2: New user or verified OTP → continue registration
+            if not is_verified and not user:
                 return Response(
                     {
                         "Status": 400,
@@ -393,7 +422,7 @@ class BaseOTPRegistrationViewSet(ViewSet):
                 )
 
             user, created = User.objects.get_or_create(email=email)
-            user.set_password(serializer.validated_data["password"])
+            user.set_password(password)
 
             if self.is_admin:
                 user.is_staff = True
@@ -407,7 +436,7 @@ class BaseOTPRegistrationViewSet(ViewSet):
             return Response(
                 {
                     "Status": 201,
-                    "Message": "Admin account created successfully." if self.is_admin else "Password set successfully.",
+                    "Message": "Account created successfully." if created else "Password updated.",
                     "Error": False,
                     "tokens": tokens
                 },
@@ -415,7 +444,6 @@ class BaseOTPRegistrationViewSet(ViewSet):
             )
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
 
 
 @extend_schema(tags=["1. User Register with OTP"])
