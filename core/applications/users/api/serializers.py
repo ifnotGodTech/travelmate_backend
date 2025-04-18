@@ -106,11 +106,12 @@ class PasswordSetSerializer(serializers.Serializer):
         validators=[validate_password]  # Django's built-in password validators
     )
     def validate_email(self, email):
-        """Check if the email has completed OTP verification."""
-        if not cache.get(f"{email}_verified"):
-            raise serializers.ValidationError(
-                "OTP not verified or expired."
-            )
+        user_exists = User.objects.filter(email=email).exists()
+        is_verified = cache.get(f"{email}_verified")
+
+        # Only require OTP if user doesn't exist
+        if not user_exists and not is_verified:
+            raise serializers.ValidationError("OTP not verified or expired.")
         return email
 
 class OSNameSchema(BaseModelNoDefs):
