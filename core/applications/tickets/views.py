@@ -3,12 +3,16 @@ from rest_framework import viewsets, permissions, status, generics
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.core.mail import send_mail
+from django.db import models
 from django.conf import settings
 from .models import Ticket, Message, EscalationLevel, EscalationReason
 from .serializers import (
     TicketSerializer, MessageSerializer, TicketCreateSerializer,
     TicketEscalateSerializer, MessageCreateSerializer,
-    EscalationLevelSerializer, EscalationReasonSerializer
+    EscalationLevelSerializer, EscalationReasonSerializer,     TicketEscalatedStatsSerializer,
+    TicketResolutionStatsSerializer,
+    CategoryStatsSerializer,
+    EscalationLevelStatsSerializer
 )
 from drf_spectacular.utils import extend_schema_view
 from .schema import (
@@ -27,7 +31,10 @@ from .schema import (
     escalation_reason_update_schema, escalation_reason_partial_update_schema,
     escalation_reason_destroy_schema, escalation_level_retrieve_schema,
     escalation_level_update_schema, escalation_level_partial_update_schema,
-    escalation_level_destroy_schema
+    escalation_level_destroy_schema, admin_ticket_escalated_stats_schema,
+    admin_ticket_resolution_stats_schema,
+    admin_ticket_category_stats_schema,
+    admin_ticket_escalation_level_stats_schema,
 )
 
 class IsAdminOrOwner(permissions.BasePermission):
@@ -77,12 +84,165 @@ class EscalationReasonViewSet(viewsets.ModelViewSet):
     partial_update=admin_ticket_partial_update_schema,
     destroy=admin_ticket_destroy_schema,
     escalate=ticket_escalate_schema,
-    resolve=ticket_resolve_schema
+    resolve=ticket_resolve_schema,
+    escalated_stats=admin_ticket_escalated_stats_schema,
+    resolution_stats=admin_ticket_resolution_stats_schema,
+    category_stats=admin_ticket_category_stats_schema,
+    escalation_level_stats=admin_ticket_escalation_level_stats_schema,
 )
 class AdminTicketViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAdminUser]
     serializer_class = TicketSerializer
     queryset = Ticket.objects.all()
+
+    @action(detail=False, methods=['get'])
+    def escalated_stats(self, request):
+        from django.utils import timezone
+        from datetime import timedelta
+        from django.db.models import Count
+
+        now = timezone.now()
+        day_ago = now - timedelta(days=1)
+        week_ago = now - timedelta(weeks=1)
+        month_ago = now - timedelta(days=30)
+        year_ago = now - timedelta(days=365)
+
+        # Get unresolved escalated tickets with full data
+        day_tickets = self.queryset.filter(
+            escalated=True,
+            status='pending',
+            created_at__gte=day_ago
+        )
+        week_tickets = self.queryset.filter(
+            escalated=True,
+            status='pending',
+            created_at__gte=week_ago
+        )
+        month_tickets = self.queryset.filter(
+            escalated=True,
+            status='pending',
+            created_at__gte=month_ago
+        )
+        year_tickets = self.queryset.filter(
+            escalated=True,
+            status='pending',
+            created_at__gte=year_ago
+        )
+
+        # Serialize the ticket data
+        serializer_24h = self.get_serializer(day_tickets, many=True)
+        serializer_week = self.get_serializer(week_tickets, many=True)
+        serializer_month = self.get_serializer(month_tickets, many=True)
+        serializer_year = self.get_serializer(year_tickets, many=True)
+
+        stats_data = {
+            'unresolved_escalated': {
+                'last_24_hours': {
+                    'count': day_tickets.count(),
+                    'tickets': serializer_24h.data
+                },
+                'last_week': {
+                    'count': week_tickets.count(),
+                    'tickets': serializer_week.data
+                },
+                'last_month': {
+                    'count': month_tickets.count(),
+                    'tickets': serializer_month.data
+                },
+                'last_year': {
+                    'count': year_tickets.count(),
+                    'tickets': serializer_year.data
+                }
+            }
+        }
+
+        serializer = TicketEscalatedStatsSerializer(data=stats_data)
+        serializer.is_valid(raise_exception=True)
+        return Response(serializer.validated_data)
+
+    @action(detail=False, methods=['get'])
+    def resolution_stats(self, request):
+        from django.utils import timezone
+        from datetime import timedelta
+        from django.db.models import Count, Avg
+
+        now = timezone.now()
+        day_ago = now - timedelta(days=1)
+        week_ago = now - timedelta(weeks=1)
+        month_ago = now - timedelta(days=30)
+        year_ago = now - timedelta(days=365)
+
+        # Get resolved tickets with full data
+        day_tickets = self.queryset.filter(status='resolved', updated_at__gte=day_ago)
+        week_tickets = self.queryset.filter(status='resolved', updated_at__gte=week_ago)
+        month_tickets = self.queryset.filter(status='resolved', updated_at__gte=month_ago)
+        year_tickets = self.queryset.filter(status='resolved', updated_at__gte=year_ago)
+
+        # Serialize the ticket data
+        serializer_24h = self.get_serializer(day_tickets, many=True)
+        serializer_week = self.get_serializer(week_tickets, many=True)
+        serializer_month = self.get_serializer(month_tickets, many=True)
+        serializer_year = self.get_serializer(year_tickets, many=True)
+
+        stats_data = {
+            'resolved_tickets': {
+                'last_24_hours': {
+                    'count': day_tickets.count(),
+                    'tickets': serializer_24h.data
+                },
+                'last_week': {
+                    'count': week_tickets.count(),
+                    'tickets': serializer_week.data
+                },
+                'last_month': {
+                    'count': month_tickets.count(),
+                    'tickets': serializer_month.data
+                },
+                'last_year': {
+                    'count': year_tickets.count(),
+                    'tickets': serializer_year.data
+                }
+            }
+        }
+
+        serializer = TicketResolutionStatsSerializer(data=stats_data)
+        serializer.is_valid(raise_exception=True)
+        return Response(serializer.validated_data)
+
+    @action(detail=False, methods=['get'])
+    def category_stats(self, request):
+        from django.db.models import Count
+
+        # Get tickets by category
+        category_counts = self.queryset.values('category').annotate(
+            total=Count('id'),
+            pending=Count('id', filter=models.Q(status='pending')),
+            resolved=Count('id', filter=models.Q(status='resolved')),
+            escalated=Count('id', filter=models.Q(escalated=True))
+        )
+
+        return Response({
+            'categories': category_counts
+        })
+
+    @action(detail=False, methods=['get'])
+    def escalation_level_stats(self, request):
+        from django.db.models import Count
+
+        # Get tickets by escalation level
+        escalation_stats = self.queryset.filter(
+            escalated=True
+        ).values(
+            'escalation_level__name'
+        ).annotate(
+            total=Count('id'),
+            pending=Count('id', filter=models.Q(status='pending')),
+            resolved=Count('id', filter=models.Q(status='resolved'))
+        )
+
+        return Response({
+            'escalation_levels': escalation_stats
+        })
 
     @action(detail=True, methods=['post'])
     def escalate(self, request, pk=None):

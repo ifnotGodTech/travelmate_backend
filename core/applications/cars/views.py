@@ -180,6 +180,7 @@ class TransferSearchViewSet(viewsets.ViewSet):
         pickup_time = data.get('pickup_time')
         passengers = data.get('passengers', 1)  # Make passengers optional with default value of 1
         transfer_type = data.get('transfer_type', 'PRIVATE')
+        currency = data.get('currency', 'EUR')
 
         # Validate required parameters
         if not all([pickup_location, pickup_date, pickup_time]):
@@ -199,6 +200,13 @@ class TransferSearchViewSet(viewsets.ViewSet):
         if not data.get('end_address') and not dropoff_location.isalpha():
             return Response(
                 {'error': 'Please provide an end_address for the destination'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Validate currency format (optional)
+        if currency and not isinstance(currency, str) or len(currency) != 3:
+            return Response(
+                {'error': 'Currency must be a valid 3-letter code (e.g. EUR, USD)'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -239,7 +247,8 @@ class TransferSearchViewSet(viewsets.ViewSet):
             'flight_departure_time': data.get('flight_departure_time'),
             'flight_departure_location': data.get('flight_departure_location'),
             'flight_arrival_time': data.get('flight_arrival_time'),
-            'flight_arrival_location': data.get('flight_arrival_location')
+            'flight_arrival_location': data.get('flight_arrival_location'),
+            'currency': currency.upper()
         }
 
         try:

@@ -87,3 +87,32 @@ class MessageCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Message
         fields = ('content', 'attachment')
+
+class TicketStatPeriodSerializer(serializers.Serializer):
+    count = serializers.IntegerField()
+    tickets = TicketSerializer(many=True)
+
+class TicketEscalatedStatsSerializer(serializers.Serializer):
+    unresolved_escalated = serializers.DictField(
+        child=TicketStatPeriodSerializer(),
+        required=True
+    )
+
+class TicketResolutionStatsSerializer(serializers.Serializer):
+    resolved_tickets = serializers.DictField(
+        child=TicketStatPeriodSerializer(),
+        required=True
+    )
+
+class CategoryStatsSerializer(serializers.Serializer):
+    category = serializers.CharField()
+    total = serializers.IntegerField()
+    pending = serializers.IntegerField()
+    resolved = serializers.IntegerField()
+    escalated = serializers.IntegerField()
+
+class EscalationLevelStatsSerializer(serializers.Serializer):
+    escalation_level__name = serializers.CharField()
+    total = serializers.IntegerField()
+    pending = serializers.IntegerField()
+    resolved = serializers.IntegerField()
