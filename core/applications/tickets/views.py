@@ -136,7 +136,7 @@ class AdminTicketViewSet(viewsets.ModelViewSet):
             escalated_queryset = escalated_queryset.filter(created_at__gte=since)
 
         escalated_serializer = self.get_serializer(escalated_queryset, many=True)
-        response_data['unresolved_escalated'] = {
+        response_data['escalated_issues'] = {
             'count': escalated_queryset.count(),
             'tickets': escalated_serializer.data
         }
@@ -181,7 +181,7 @@ class AdminTicketViewSet(viewsets.ModelViewSet):
             pending_queryset = pending_queryset.filter(created_at__gte=since)
 
         pending_serializer = self.get_serializer(pending_queryset, many=True)
-        response_data['pending_tickets'] = {
+        response_data['open_tickets'] = {
             'count': pending_queryset.count(),
             'tickets': pending_serializer.data
         }
