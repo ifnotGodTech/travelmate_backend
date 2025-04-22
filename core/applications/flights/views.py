@@ -7,6 +7,7 @@ from rest_framework.decorators import permission_classes
 from rest_framework.decorators import action
 from django.core.cache import cache
 from django.db import transaction
+from django.core.exceptions import ValidationError
 from django.utils.dateparse import parse_duration
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -400,6 +401,37 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
             return False, str(e)
 
 
+    def _regenerate_offer_and_segment_ids(self, flight_offers):
+        """
+        Ensure all flightOffers and their segments have unique IDs.
+        Offer IDs must be simple integer strings ("1", "2", ...).
+        Segment IDs can be alphanumeric.
+        """
+        import random
+        import string
+
+        def generate_alphanumeric_id(length=8):
+            return ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
+
+        new_offers = []
+        for offer_idx, offer in enumerate(flight_offers, 1):
+            offer = offer.copy()
+            # Offer ID as a simple integer string
+            offer['id'] = str(offer_idx)
+
+            for itinerary in offer.get('itineraries', []):
+                for segment in itinerary.get('segments', []):
+                    segment['id'] = generate_alphanumeric_id()
+
+            # Update fareDetailsBySegment in travelerPricings
+            for tp in offer.get('travelerPricings', []):
+                for idx, fare in enumerate(tp.get('fareDetailsBySegment', [])):
+                    # Map to the correct segment ID
+                    fare['segmentId'] = offer['itineraries'][0]['segments'][idx]['id']
+
+            new_offers.append(offer)
+        return new_offers
+
     def _create_amadeus_booking(self, flight_booking):
         """
         Create the actual booking with Amadeus API with segment validation
@@ -417,17 +449,17 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
 
                 if cached_offer:
                     flight_offers.append(cached_offer)
-                    continue
+                    # continue
 
-                # Fallback to searching by flight details if segment-based cache fails
-                for offer_id in self._find_offer_ids_for_flight(flight):
-                    cache_key = f"flight_offer_{offer_id}"
-                    cached_offer = cache.get(cache_key)
-                    if cached_offer:
-                        flight_offers.append(cached_offer)
-                        # Cache the offer by segment ID for future reference
-                        cache.set(f"flight_offer_by_segment_{flight.segment_id}", cached_offer, timeout=3600)
-                        break
+                # # Fallback to searching by flight details if segment-based cache fails
+                # for offer_id in self._find_offer_ids_for_flight(flight):
+                #     cache_key = f"flight_offer_{offer_id}"
+                #     cached_offer = cache.get(cache_key)
+                #     if cached_offer:
+                #         flight_offers.append(cached_offer)
+                #         # Cache the offer by segment ID for future reference
+                #         cache.set(f"flight_offer_by_segment_{flight.segment_id}", cached_offer, timeout=3600)
+                #         break
 
             # If no offers found in cache, use reconstructed offers but with proper pricing
             if not flight_offers:
@@ -439,6 +471,8 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
                     if 'price' in offer:
                         offer['price']['total'] = str(flight_booking.base_flight_cost)
                         offer['price']['grandTotal'] = str(flight_booking.base_flight_cost)
+                # Regenerate IDs to avoid duplicates
+                flight_offers = self._regenerate_offer_and_segment_ids(flight_offers)
 
             # Rest of the method remains the same...
             travelers = []
@@ -503,10 +537,10 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
                         }],
                         'emailAddress': flight_booking.booking.user.email,
                         'address': {
-                            'lines': [passenger_bookings.first().passenger.address_line1] if hasattr(passenger_bookings.first().passenger, 'address_line1') else ['123 Main Street'],
-                            'postalCode': passenger_bookings.first().passenger.postal_code if hasattr(passenger_bookings.first().passenger, 'postal_code') else '10001',
-                            'cityName': passenger_bookings.first().passenger.city if hasattr(passenger_bookings.first().passenger, 'city') else 'New York',
-                            'countryCode': passenger_bookings.first().passenger.country_code if hasattr(passenger_bookings.first().passenger, 'country_code') else 'US'
+                            'lines': [passenger_bookings.first().passenger.address_line1 or '123 Main St'] if passenger_bookings.exists() else ['123 Main St'],
+                            'postalCode': passenger_bookings.first().passenger.postal_code or '10001',
+                            'cityName': passenger_bookings.first().passenger.city or 'New York',
+                            'countryCode': passenger_bookings.first().passenger.country or 'US'
                         }
                     }]
                 }
@@ -529,10 +563,15 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
 
             if response.status_code == 201:
                 amadeus_data = response.json()
-                flight_booking.booking_reference = amadeus_data.get('data', {}).get('id')
-                flight_booking.save()
-                self._update_ticket_numbers(flight_booking, amadeus_data)
-                return True
+
+                # Update booking reference and handle tickets
+                if self._update_ticket_numbers(flight_booking, amadeus_data):
+                    return True
+                else:
+                    # Still return True even if ticket numbers aren't available yet
+                    # They will be updated later via the check_ticket_status endpoint
+                    print("Booking created successfully, tickets will be generated asynchronously")
+                    return True
 
             # Handle errors
             error_details = response.json().get('errors', [])
@@ -549,6 +588,13 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
             traceback.print_exc()
             return False
 
+    def _get_additional_services(self, flight_booking):
+        """
+        Return additional services for the flight offer.
+        Currently returns an empty list.
+        """
+        return []
+
     def _prepare_flight_offers(self, flight_booking, flights):
         """
         Prepare flight offers data for Amadeus API when cached data isn't available
@@ -563,6 +609,10 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
             itinerary_key = getattr(flight, 'itinerary_index', 0)
             if itinerary_key not in segments_by_itinerary:
                 segments_by_itinerary[itinerary_key] = []
+
+            unique_segment_id = f"S{len(segments_by_itinerary[itinerary_key])+1}"
+
+
 
             segment = {
                 'departure': {
@@ -584,7 +634,7 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
                     'carrierCode': flight.operating_airline or flight.airline_code
                 },
                 'duration': self._calculate_segment_duration(flight.departure_datetime, flight.arrival_datetime),
-                'id': flight.segment_id,
+                'id': unique_segment_id,
                 'numberOfStops': flight.number_of_stops or 0,
                 'blacklistedInEU': False,
                 # Include fare details if available
@@ -601,9 +651,12 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
             num_passengers = PassengerBooking.objects.filter(flight_booking=flight_booking).count()
             base_price_per_passenger = flight_booking.base_flight_cost / num_passengers if num_passengers > 0 else Decimal('0.00')
 
+            # Create unique offer ID using booking ID, itinerary index and timestamp
+            unique_offer_id = f"O{itinerary_idx+1}"
+
             offer = {
                 'type': 'flight-offer',
-                'id': str(flight_booking.id) + f'_{itinerary_idx}',
+                'id': unique_offer_id,
                 'source': 'GDS',
                 'instantTicketingRequired': False,
                 'nonHomogeneous': False,
@@ -652,9 +705,9 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
         for i, pb in enumerate(passenger_bookings, 1):
             fare_details = []
             if segments:
-                for segment in segments:
+                for idx, segment in enumerate(segments, 1):
                     fare_details.append({
-                        'segmentId': segment.get('id'),
+                        'segmentId': f"S{idx}",
                         'cabin': segment.get('cabin', 'ECONOMY'),
                         'fareBasis': segment.get('fareBasis', ''),
                         'class': segment.get('class', 'Y'),
@@ -699,6 +752,24 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
         for i, pb in enumerate(passenger_bookings, 1):
             passenger = pb.passenger
 
+            # Validate required passport information
+            if not all([
+                passenger.passport_number,
+                passenger.passport_expiry,
+                passenger.nationality
+            ]):
+                raise ValidationError(
+                    f"Missing required passport information for passenger {passenger.first_name} {passenger.last_name}"
+                )
+
+            # Get proper phone number formatting
+            phone_number = ''.join(filter(str.isdigit, passenger.phone)) if passenger.phone else None
+            if not phone_number:
+                raise ValidationError(
+                    f"Valid phone number is required for passenger {passenger.first_name} {passenger.last_name}"
+                )
+
+
             traveler = {
                 'id': str(i),
                 'dateOfBirth': passenger.date_of_birth.strftime('%Y-%m-%d'),
@@ -712,29 +783,35 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
                     'phones': [
                         {
                             'deviceType': 'MOBILE',
-                            'countryCallingCode': '1',  # Assuming US code
-                            'number': 'N/A'
+                            'countryCallingCode': phone_number[:2],  # First 2 digits as country code
+                            'number': phone_number[2:],  # Rest of the number
                         }
                     ]
-                }
+                },
+
+                'documents': [{
+                    'documentType': 'PASSPORT',
+                    'number': passenger.passport_number,
+                    'expiryDate': passenger.passport_expiry.strftime('%Y-%m-%d'),
+                    'issuanceCountry': passenger.nationality,
+                    'nationality': passenger.nationality,
+                    'holder': True,
+                    'birthPlace': passenger.city or passenger.nationality,  # Use city of birth if available
+                    'issuanceLocation': passenger.country or passenger.nationality
+                }]
             }
 
-            # Add passport information if available
-            if passenger.passport_number:
-                traveler['documents'] = [
-                    {
-                        'documentType': 'PASSPORT',
-                        'birthPlace': 'UNKNOWN',
-                        'issuanceLocation': 'UNKNOWN',
-                        'issuanceDate': '2015-04-14',  # Placeholder
-                        'number': passenger.passport_number,
-                        'expiryDate': passenger.passport_expiry.strftime('%Y-%m-%d'),
-                        'issuanceCountry': 'US',  # Placeholder
-                        'validityCountry': 'US',  # Placeholder
-                        'nationality': passenger.nationality,
-                        'holder': True
-                    }
-                ]
+            # Add residence information if available
+            if passenger.address_line1:
+                traveler['contact']['address'] = {
+                    'lines': [
+                        passenger.address_line1,
+                        passenger.address_line2 or ''
+                    ],
+                    'postalCode': passenger.postal_code,
+                    'cityName': passenger.city,
+                    'countryCode': passenger.country,
+                }
 
             travelers.append(traveler)
 
@@ -764,35 +841,138 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
         """
         Update ticket numbers from Amadeus response
         """
-        # Extract ticket numbers from Amadeus response
-        # This is a simplified version. In real implementation, you would need to
-        # parse the Amadeus response to extract ticket numbers
+        try:
+            # Update booking reference
+            booking_id = amadeus_data.get('data', {}).get('id')
+            if not booking_id:
+                raise ValueError("No booking ID found in Amadeus response")
 
-        # For demonstration, we'll generate random ticket numbers
-        passenger_bookings = PassengerBooking.objects.filter(flight_booking=flight_booking)  # Updated field name
+            flight_booking.booking_reference = booking_id
+            flight_booking.save()
 
-        for pb in passenger_bookings:
-            pb.ticket_number = f"TICKET-{uuid.uuid4().hex[:10].upper()}"
-            pb.save()
+            # Check if tickets are available
+            tickets = amadeus_data.get('data', {}).get('ticketingAgreement', {}).get('tickets', [])
+            if tickets:
+                # If tickets are available, update them
+                passenger_bookings = PassengerBooking.objects.filter(flight_booking=flight_booking)
+                for pb, ticket in zip(passenger_bookings, tickets):
+                    if 'number' in ticket:
+                        pb.ticket_number = ticket['number']
+                    if 'seat' in ticket:
+                        pb.seat_number = ticket['seat']
+                    pb.save()
+
+            else:
+                # No tickets yet - this is normal for async ticketing
+                print("Ticketing in progress - tickets will be generated asynchronously")
+
+            return True
+
+        except Exception as e:
+            print(f"Error updating ticket numbers: {str(e)}")
+            # Don't raise an error, just return False
+            return False
 
     def _cancel_amadeus_booking(self, flight_booking):
         """
         Cancel a booking with Amadeus API
         """
         try:
-            # Initialize Amadeus client
+            if not flight_booking.booking_reference:
+                raise ValueError("No booking reference found for this flight booking")
+
             amadeus_client = self._get_amadeus_client()
 
             # Make API call to cancel booking
-            response = amadeus_client.delete(
-                f'/v1/booking/flight-orders/{flight_booking.booking_reference}'
+            response = requests.delete(
+                f"{amadeus_client.base_url}/v1/booking/flight-orders/{flight_booking.booking_reference}",
+                headers=amadeus_client._get_headers()
             )
 
-            return response.status_code == 200
+            if response.status_code == 200:
+                # Update booking status
+                flight_booking.booking.status = 'CANCELLED'
+                flight_booking.cancellation_date = timezone.now()
+                flight_booking.save()
+
+                # If there was a payment, initiate refund
+                payment = PaymentDetail.objects.filter(booking=flight_booking.booking).first()
+                if payment and payment.payment_status == 'COMPLETED':
+                    stripe.api_key = settings.STRIPE_SECRET_KEY
+                    refund = stripe.Refund.create(
+                        payment_intent=payment.transaction_id,
+                        reason='requested_by_customer'
+                    )
+
+                    # Update payment status
+                    payment.payment_status = 'REFUNDED'
+                    payment.additional_details = {
+                        **(payment.additional_details or {}),
+                        'refund_id': refund.id,
+                        'refund_status': refund.status,
+                        'refund_date': timezone.now().isoformat()
+                    }
+                    payment.save()
+
+                return True
+
+            # Handle specific error cases
+            error_data = response.json().get('errors', [{}])[0]
+            error_message = error_data.get('detail', 'Unknown error occurred')
+            raise ValueError(f"Failed to cancel booking: {error_message}")
 
         except Exception as e:
             print(f"Error cancelling Amadeus booking: {str(e)}")
             return False
+
+
+    @action(detail=True, methods=['get'])
+    def check_ticket_status(self, request, pk=None):
+        """
+        Check if tickets have been issued for this booking
+        """
+        flight_booking = self.get_object()
+
+        if not flight_booking.booking_reference:
+            return Response(
+                {"error": "No booking reference found"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            # Get booking details from Amadeus
+            amadeus_client = AmadeusAPI()
+            response = requests.get(
+                f"{amadeus_client.base_url}/v1/booking/flight-orders/{flight_booking.booking_reference}",
+                headers=amadeus_client._get_headers()
+            )
+
+            if response.status_code == 200:
+                amadeus_data = response.json()
+
+                # Check and update tickets if available
+                if self._update_ticket_numbers(flight_booking, amadeus_data):
+                    return Response({
+                        "status": "SUCCESS",
+                        "message": "Tickets have been issued",
+                        "booking": FlightBookingSerializer(flight_booking).data
+                    })
+                else:
+                    return Response({
+                        "status": "PENDING",
+                        "message": "Tickets are still being processed"
+                    })
+
+            return Response(
+                {"error": "Failed to retrieve booking status"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+        except Exception as e:
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
     def _get_amadeus_client(self):
         """
@@ -872,22 +1052,25 @@ class FlightSearchViewSet(viewsets.ViewSet):
                 currency=currency
             )
 
-            # Post-process flight offers to filter non-stop flights if required
-            if non_stop and 'data' in flight_offers:
-                flight_offers['data'] = [
-                    offer for offer in flight_offers['data']
-                    if len(offer.get('itineraries', [{}])[0].get('segments', [])) == 1
-                ]
-
-            # After getting flight_offers but before returning Response
+             # Post-process flight offers
             if 'data' in flight_offers:
+                # Force oneWay to true for all offers
+                for offer in flight_offers['data']:
+                    offer['oneWay'] = True
+
+                # Filter non-stop flights if required
+                if non_stop:
+                    flight_offers['data'] = [
+                        offer for offer in flight_offers['data']
+                        if len(offer.get('itineraries', [{}])[0].get('segments', [])) == 1
+                    ]
+
+                # Cache the offers
                 for offer in flight_offers['data']:
                     if 'id' in offer:
-                        # Cache by offer ID
                         cache_key = f"flight_offer_{offer['id']}"
                         cache.set(cache_key, offer, timeout=3600)
 
-                        # Also cache by segment IDs for easier lookup later
                         for itinerary in offer.get('itineraries', []):
                             for segment in itinerary.get('segments', []):
                                 if 'id' in segment:

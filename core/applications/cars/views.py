@@ -644,12 +644,17 @@ class CarBookingViewSet(viewsets.ModelViewSet):
 
     def _create_amadeus_booking(self, car_booking):
         """
-        Create the actual booking with Amadeus API
-        Modified to work with CarBooking model
+        Create the actual booking with Amadeus API using their expected format
         """
         try:
             amadeus_service = AmadeusService()
             booking = car_booking.booking  # Access the base Booking
+
+            # Get payment using the correct related name
+            payment = Payment.objects.filter(
+                booking=booking,
+                status='COMPLETED'
+            ).first()
 
             # Retrieve the original transfer details from cache
             cache_key = f"transfer_details:{car_booking.transfer_id}"
@@ -663,55 +668,53 @@ class CarBookingViewSet(viewsets.ModelViewSet):
             pickup_location = Location.objects.get(id=car_booking.pickup_location_id)
             dropoff_location = Location.objects.get(id=car_booking.dropoff_location_id)
 
-            # Prepare payload for Amadeus API
+            # Format datetime string correctly
+            pickup_datetime = datetime.combine(
+                car_booking.pickup_date,
+                car_booking.pickup_time  # Already a time object
+            ).strftime('%Y-%m-%dT%H:%M:%S')
+
+            # Prepare payload for Amadeus API in their expected format
             amadeus_payload = {
                 "data": {
-                    "type": "transferBooking",
-                    "transferId": car_booking.transfer_id,
-                    "customer": {
-                                    "firstName": car_booking.customer_first_name,
-                                    "lastName": car_booking.customer_last_name,
-                                    "title": car_booking.customer_title,
-                                    "email": car_booking.customer_email,
-                                    "phone": car_booking.customer_phone,
-                                    "countryCode": pickup_location.country or "US"
-                                },
-                    "pickup": {
-                        "locationId": pickup_location.code,
-                        "date": car_booking.pickup_date.strftime('%Y-%m-%d'),
-                        "time": car_booking.pickup_time.strftime('%H:%M'),
-                        "address": {
-                            "line1": pickup_location.address or transfer_details.get('start_location', {}).get('address', ''),
-                            "city": pickup_location.city,
-                            "postalCode": transfer_details.get('start_location', {}).get('postalCode', ''),
-                            "country": pickup_location.country,
+                    "note": f"Booking reference: {car_booking.booking_reference}",
+                    "passengers": [{
+                        "firstName": car_booking.customer_first_name,
+                        "lastName": car_booking.customer_last_name,
+                        "title": car_booking.customer_title or "MR",
+                        "contacts": {
+                            "phoneNumber": car_booking.customer_phone,
+                            "email": car_booking.customer_email
+                        },
+                        "billingAddress": {
+                            "line": dropoff_location.address or transfer_details['end_location']['address'],
+                            "zip": transfer_details['end_location'].get('zipcode', ''),
+                            "countryCode": dropoff_location.country or transfer_details['end_location']['country'],
+                            "cityName": dropoff_location.city or transfer_details['end_location']['city']
                         }
-                    },
-                    "dropoff": {
-                        "locationId": dropoff_location.code,
+                    }],
+                    "start": {
+                        "dateTime": pickup_datetime,
                         "address": {
-                            "line1": dropoff_location.address or '',
-                            "city": dropoff_location.city,
-                            "country": dropoff_location.country,
+                            "line": pickup_location.address or transfer_details['start_location'].get('address', ''),
+                            "cityName": pickup_location.city or transfer_details['start_location'].get('city', '')
                         }
-                    },
-                    "passengers": car_booking.passengers,
-                    "vehicle": {
-                        "type": transfer_details.get('vehicle_type', 'STANDARD')
-                    },
-                    "price": {
-                        "amount": float(car_booking.base_transfer_cost),
-                        "currency": car_booking.currency
-                    },
-                    "remarks": f"Booking created via API for booking {car_booking.booking_reference}"
+                    }
                 }
             }
 
-            # If there are child seats, add them to the payload
-            if car_booking.child_seats > 0:
-                amadeus_payload["data"]["extras"] = [
-                    {"type": "CHILD_SEAT", "quantity": car_booking.child_seats}
-                ]
+            # Add payment information if available
+            if payment and payment.payment_method == 'CREDIT_CARD':
+                amadeus_payload["data"]["payment"] = {
+                    "methodOfPayment": "CREDIT_CARD",
+                    "creditCard": {
+                        "number": payment.additional_details.get('card_number'),
+                        "holderName": payment.additional_details.get('card_holder'),
+                        "vendorCode": payment.additional_details.get('card_type', 'VI'),
+                        "expiryDate": payment.additional_details.get('expiry_date'),
+                        "cvv": payment.additional_details.get('cvv')
+                    }
+                }
 
             # Log the complete payload for debugging
             logger.info(f"Creating transfer booking with payload: {amadeus_payload}")
