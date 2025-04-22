@@ -744,9 +744,20 @@ admin_ticket_destroy_schema = extend_schema(
 )
 
 # Admin Ticket Statistics schema definitions
+
 admin_ticket_escalated_stats_schema = extend_schema(
     summary="Admin: Get escalated tickets statistics",
-    description="Returns statistics and details about escalated tickets that are unresolved for different time periods.",
+    description=(
+        "Returns statistics and details about unresolved escalated tickets. "
+        "Supports filtering by days, weeks, months, and years via query parameters. "
+        "Example: /api/admin/tickets/escalated_stats/?days=2"
+    ),
+    parameters=[
+        OpenApiParameter("days", OpenApiTypes.INT, OpenApiParameter.QUERY, description="Number of days to look back"),
+        OpenApiParameter("weeks", OpenApiTypes.INT, OpenApiParameter.QUERY, description="Number of weeks to look back"),
+        OpenApiParameter("months", OpenApiTypes.INT, OpenApiParameter.QUERY, description="Number of months to look back"),
+        OpenApiParameter("years", OpenApiTypes.INT, OpenApiParameter.QUERY, description="Number of years to look back"),
+    ],
     responses={
         200: OpenApiResponse(
             response=OpenApiTypes.OBJECT,
@@ -756,40 +767,26 @@ admin_ticket_escalated_stats_schema = extend_schema(
                     name="Escalated Stats Response",
                     value={
                         "unresolved_escalated": {
-                            "last_24_hours": {
-                                "count": 5,
-                                "tickets": [
-                                    {
+                            "count": 5,
+                            "tickets": [
+                                {
+                                    "id": 1,
+                                    "title": "Payment Issue",
+                                    "category": "Flight",
+                                    "description": "Payment not processed",
+                                    "status": "pending",
+                                    "escalated": True,
+                                    "created_at": "2025-04-18T10:30:00Z",
+                                    "escalation_level": {
+                                        "id": 2,
+                                        "name": "Level 2 Support"
+                                    },
+                                    "escalation_reason": {
                                         "id": 1,
-                                        "title": "Payment Issue",
-                                        "category": "Flight",
-                                        "description": "Payment not processed",
-                                        "status": "pending",
-                                        "escalated": True,
-                                        "created_at": "2025-04-18T10:30:00Z",
-                                        "escalation_level": {
-                                            "id": 2,
-                                            "name": "Level 2 Support"
-                                        },
-                                        "escalation_reason": {
-                                            "id": 1,
-                                            "reason": "Technical complexity"
-                                        }
+                                        "reason": "Technical complexity"
                                     }
-                                ]
-                            },
-                            "last_week": {
-                                "count": 15,
-                                "tickets": []  # Similar structure as above
-                            },
-                            "last_month": {
-                                "count": 45,
-                                "tickets": []  # Similar structure as above
-                            },
-                            "last_year": {
-                                "count": 250,
-                                "tickets": []  # Similar structure as above
-                            }
+                                }
+                            ]
                         }
                     }
                 )
@@ -803,7 +800,17 @@ admin_ticket_escalated_stats_schema = extend_schema(
 
 admin_ticket_resolution_stats_schema = extend_schema(
     summary="Admin: Get ticket resolution statistics",
-    description="Returns statistics and details about resolved tickets for different time periods.",
+    description=(
+        "Returns statistics and details about resolved tickets. "
+        "Supports filtering by days, weeks, months, and years via query parameters. "
+        "Example: /api/admin/tickets/resolution_stats/?months=1"
+    ),
+    parameters=[
+        OpenApiParameter("days", OpenApiTypes.INT, OpenApiParameter.QUERY, description="Number of days to look back"),
+        OpenApiParameter("weeks", OpenApiTypes.INT, OpenApiParameter.QUERY, description="Number of weeks to look back"),
+        OpenApiParameter("months", OpenApiTypes.INT, OpenApiParameter.QUERY, description="Number of months to look back"),
+        OpenApiParameter("years", OpenApiTypes.INT, OpenApiParameter.QUERY, description="Number of years to look back"),
+    ],
     responses={
         200: OpenApiResponse(
             response=OpenApiTypes.OBJECT,
@@ -813,33 +820,63 @@ admin_ticket_resolution_stats_schema = extend_schema(
                     name="Resolution Stats Response",
                     value={
                         "resolved_tickets": {
-                            "last_24_hours": {
-                                "count": 10,
-                                "tickets": [
-                                    {
-                                        "id": 1,
-                                        "title": "Booking Confirmation",
-                                        "category": "Hotel",
-                                        "description": "Need booking confirmation",
-                                        "status": "resolved",
-                                        "created_at": "2025-04-18T10:30:00Z",
-                                        "resolved_at": "2025-04-18T11:30:00Z"
-                                    }
-                                ]
-                            },
-                            "last_week": {
-                                "count": 75,
-                                "tickets": []  # Similar structure as above
-                            },
-                            "last_month": {
-                                "count": 300,
-                                "tickets": []  # Similar structure as above
-                            },
-                            "last_year": {
-                                "count": 3600,
-                                "tickets": []  # Similar structure as above
-                            }
+                            "count": 10,
+                            "tickets": [
+                                {
+                                    "id": 1,
+                                    "title": "Booking Confirmation",
+                                    "category": "Hotel",
+                                    "description": "Need booking confirmation",
+                                    "status": "resolved",
+                                    "created_at": "2025-04-18T10:30:00Z",
+                                    "updated_at": "2025-04-18T11:30:00Z"
+                                }
+                            ]
                         }
+                    }
+                )
+            ]
+        ),
+        401: OpenApiResponse(description="Authentication credentials were not provided."),
+        403: OpenApiResponse(description="You do not have permission to access this view.")
+    },
+    tags=["Admin Ticket Statistics"]
+)
+
+admin_ticket_pending_schema = extend_schema(
+    summary="Admin: List pending tickets",
+    description=(
+        "Returns all tickets with status 'pending', with optional time-based filtering. "
+        "Supports filtering by days, weeks, months, and years via query parameters. "
+        "Example: /api/admin/tickets/pending/?days=7"
+    ),
+    parameters=[
+        OpenApiParameter("days", OpenApiTypes.INT, OpenApiParameter.QUERY, description="Number of days to look back"),
+        OpenApiParameter("weeks", OpenApiTypes.INT, OpenApiParameter.QUERY, description="Number of weeks to look back"),
+        OpenApiParameter("months", OpenApiTypes.INT, OpenApiParameter.QUERY, description="Number of months to look back"),
+        OpenApiParameter("years", OpenApiTypes.INT, OpenApiParameter.QUERY, description="Number of years to look back"),
+    ],
+    responses={
+        200: TicketSerializer(many=True),
+        401: OpenApiResponse(description="Authentication credentials were not provided."),
+        403: OpenApiResponse(description="You do not have permission to access this view.")
+    },
+    tags=["Admin Ticket Management"]
+)
+
+admin_ticket_average_response_time_schema = extend_schema(
+    summary="Admin: Get average admin response time",
+    description="Returns the average admin response time for tickets (in seconds and human-readable format).",
+    responses={
+        200: OpenApiResponse(
+            response=OpenApiTypes.OBJECT,
+            description="Average admin response time",
+            examples=[
+                OpenApiExample(
+                    name="Average Response Time",
+                    value={
+                        "average_response_time_seconds": 3600,
+                        "average_response_time_human": "1:00:00"
                     }
                 )
             ]
@@ -912,6 +949,122 @@ admin_ticket_escalation_level_stats_schema = extend_schema(
                                 "resolved": 20
                             }
                         ]
+                    }
+                )
+            ]
+        ),
+        401: OpenApiResponse(description="Authentication credentials were not provided."),
+        403: OpenApiResponse(description="You do not have permission to access this view.")
+    },
+    tags=["Admin Ticket Statistics"]
+)
+
+admin_ticket_all_stats_schema = extend_schema(
+    summary="Admin: Get comprehensive ticket statistics",
+    description=(
+        "Returns all ticket statistics in a single payload including escalated tickets, "
+        "resolved tickets, category statistics, escalation level statistics, pending tickets, "
+        "and average response time statistics. "
+        "Supports filtering by days, weeks, months, and years via query parameters. "
+        "Example: /api/admin/tickets/all_stats/?days=7"
+    ),
+    parameters=[
+        OpenApiParameter("days", OpenApiTypes.INT, OpenApiParameter.QUERY, description="Number of days to look back"),
+        OpenApiParameter("weeks", OpenApiTypes.INT, OpenApiParameter.QUERY, description="Number of weeks to look back"),
+        OpenApiParameter("months", OpenApiTypes.INT, OpenApiParameter.QUERY, description="Number of months to look back"),
+        OpenApiParameter("years", OpenApiTypes.INT, OpenApiParameter.QUERY, description="Number of years to look back"),
+    ],
+    responses={
+        200: OpenApiResponse(
+            response=OpenApiTypes.OBJECT,
+            description="Comprehensive ticket statistics",
+            examples=[
+                OpenApiExample(
+                    name="All Stats Response",
+                    value={
+                        "unresolved_escalated": {
+                            "count": 5,
+                            "tickets": [
+                                {
+                                    "id": 1,
+                                    "title": "Payment Issue",
+                                    "category": "Flight",
+                                    "description": "Payment not processed",
+                                    "status": "pending",
+                                    "escalated": True,
+                                    "created_at": "2025-04-18T10:30:00Z",
+                                    "escalation_level": {
+                                        "id": 2,
+                                        "name": "Level 2 Support"
+                                    },
+                                    "escalation_reason": {
+                                        "id": 1,
+                                        "reason": "Technical complexity"
+                                    }
+                                }
+                            ]
+                        },
+                        "resolved_tickets": {
+                            "count": 10,
+                            "tickets": [
+                                {
+                                    "id": 2,
+                                    "title": "Booking Confirmation",
+                                    "category": "Hotel",
+                                    "description": "Need booking confirmation",
+                                    "status": "resolved",
+                                    "created_at": "2025-04-18T10:30:00Z",
+                                    "updated_at": "2025-04-18T11:30:00Z"
+                                }
+                            ]
+                        },
+                        "categories": [
+                            {
+                                "category": "Flight",
+                                "total": 150,
+                                "pending": 45,
+                                "resolved": 105,
+                                "escalated": 20
+                            },
+                            {
+                                "category": "Hotel",
+                                "total": 100,
+                                "pending": 30,
+                                "resolved": 70,
+                                "escalated": 15
+                            }
+                        ],
+                        "escalation_levels": [
+                            {
+                                "escalation_level__name": "Level 1",
+                                "total": 50,
+                                "pending": 20,
+                                "resolved": 30
+                            },
+                            {
+                                "escalation_level__name": "Level 2",
+                                "total": 30,
+                                "pending": 10,
+                                "resolved": 20
+                            }
+                        ],
+                        "pending_tickets": {
+                            "count": 75,
+                            "tickets": [
+                                {
+                                    "id": 3,
+                                    "title": "Refund Request",
+                                    "category": "Flight",
+                                    "description": "Need refund for canceled flight",
+                                    "status": "pending",
+                                    "created_at": "2025-04-18T14:30:00Z"
+                                }
+                            ]
+                        },
+                        "average_response_time": {
+                            "seconds": 3600,
+                            "human_readable": "1:00:00"
+                        }
                     }
                 )
             ]
