@@ -84,6 +84,9 @@ class AmadeusService:
                 "transferType": transfer_type,
                 "passengers": passengers
             }
+            # Add currency to payload if provided
+            if filters.get('currency'):
+                payload["currencyCode"] = filters.get('currency').upper()
 
             # Log the full request for debugging
             headers = self._get_headers()

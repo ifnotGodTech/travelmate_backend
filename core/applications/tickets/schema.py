@@ -743,6 +743,185 @@ admin_ticket_destroy_schema = extend_schema(
     tags=["Admin Ticket Management"]
 )
 
+# Admin Ticket Statistics schema definitions
+admin_ticket_escalated_stats_schema = extend_schema(
+    summary="Admin: Get escalated tickets statistics",
+    description="Returns statistics and details about escalated tickets that are unresolved for different time periods.",
+    responses={
+        200: OpenApiResponse(
+            response=OpenApiTypes.OBJECT,
+            description="Escalated tickets statistics and details",
+            examples=[
+                OpenApiExample(
+                    name="Escalated Stats Response",
+                    value={
+                        "unresolved_escalated": {
+                            "last_24_hours": {
+                                "count": 5,
+                                "tickets": [
+                                    {
+                                        "id": 1,
+                                        "title": "Payment Issue",
+                                        "category": "Flight",
+                                        "description": "Payment not processed",
+                                        "status": "pending",
+                                        "escalated": True,
+                                        "created_at": "2025-04-18T10:30:00Z",
+                                        "escalation_level": {
+                                            "id": 2,
+                                            "name": "Level 2 Support"
+                                        },
+                                        "escalation_reason": {
+                                            "id": 1,
+                                            "reason": "Technical complexity"
+                                        }
+                                    }
+                                ]
+                            },
+                            "last_week": {
+                                "count": 15,
+                                "tickets": []  # Similar structure as above
+                            },
+                            "last_month": {
+                                "count": 45,
+                                "tickets": []  # Similar structure as above
+                            },
+                            "last_year": {
+                                "count": 250,
+                                "tickets": []  # Similar structure as above
+                            }
+                        }
+                    }
+                )
+            ]
+        ),
+        401: OpenApiResponse(description="Authentication credentials were not provided."),
+        403: OpenApiResponse(description="You do not have permission to access this view.")
+    },
+    tags=["Admin Ticket Statistics"]
+)
+
+admin_ticket_resolution_stats_schema = extend_schema(
+    summary="Admin: Get ticket resolution statistics",
+    description="Returns statistics and details about resolved tickets for different time periods.",
+    responses={
+        200: OpenApiResponse(
+            response=OpenApiTypes.OBJECT,
+            description="Ticket resolution statistics and details",
+            examples=[
+                OpenApiExample(
+                    name="Resolution Stats Response",
+                    value={
+                        "resolved_tickets": {
+                            "last_24_hours": {
+                                "count": 10,
+                                "tickets": [
+                                    {
+                                        "id": 1,
+                                        "title": "Booking Confirmation",
+                                        "category": "Hotel",
+                                        "description": "Need booking confirmation",
+                                        "status": "resolved",
+                                        "created_at": "2025-04-18T10:30:00Z",
+                                        "resolved_at": "2025-04-18T11:30:00Z"
+                                    }
+                                ]
+                            },
+                            "last_week": {
+                                "count": 75,
+                                "tickets": []  # Similar structure as above
+                            },
+                            "last_month": {
+                                "count": 300,
+                                "tickets": []  # Similar structure as above
+                            },
+                            "last_year": {
+                                "count": 3600,
+                                "tickets": []  # Similar structure as above
+                            }
+                        }
+                    }
+                )
+            ]
+        ),
+        401: OpenApiResponse(description="Authentication credentials were not provided."),
+        403: OpenApiResponse(description="You do not have permission to access this view.")
+    },
+    tags=["Admin Ticket Statistics"]
+)
+
+admin_ticket_category_stats_schema = extend_schema(
+    summary="Admin: Get ticket category statistics",
+    description="Returns statistics about tickets grouped by category.",
+    responses={
+        200: OpenApiResponse(
+            response=OpenApiTypes.OBJECT,
+            description="Ticket category statistics",
+            examples=[
+                OpenApiExample(
+                    name="Category Stats Response",
+                    value={
+                        "categories": [
+                            {
+                                "category": "Flight",
+                                "total": 150,
+                                "pending": 45,
+                                "resolved": 105,
+                                "escalated": 20
+                            },
+                            {
+                                "category": "Hotel",
+                                "total": 100,
+                                "pending": 30,
+                                "resolved": 70,
+                                "escalated": 15
+                            }
+                        ]
+                    }
+                )
+            ]
+        ),
+        401: OpenApiResponse(description="Authentication credentials were not provided."),
+        403: OpenApiResponse(description="You do not have permission to access this view.")
+    },
+    tags=["Admin Ticket Statistics"]
+)
+
+admin_ticket_escalation_level_stats_schema = extend_schema(
+    summary="Admin: Get escalation level statistics",
+    description="Returns statistics about tickets grouped by escalation level.",
+    responses={
+        200: OpenApiResponse(
+            response=OpenApiTypes.OBJECT,
+            description="Escalation level statistics",
+            examples=[
+                OpenApiExample(
+                    name="Escalation Level Stats Response",
+                    value={
+                        "escalation_levels": [
+                            {
+                                "escalation_level__name": "Level 1",
+                                "total": 50,
+                                "pending": 20,
+                                "resolved": 30
+                            },
+                            {
+                                "escalation_level__name": "Level 2",
+                                "total": 30,
+                                "pending": 10,
+                                "resolved": 20
+                            }
+                        ]
+                    }
+                )
+            ]
+        ),
+        401: OpenApiResponse(description="Authentication credentials were not provided."),
+        403: OpenApiResponse(description="You do not have permission to access this view.")
+    },
+    tags=["Admin Ticket Statistics"]
+)
+
 # Add these schema definitions
 message_update_schema = extend_schema(
     summary="Update a message",

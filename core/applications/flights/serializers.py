@@ -100,6 +100,10 @@ class FlightSearchSerializer(serializers.Serializer):
     departure_date = serializers.DateField()
     return_date = serializers.DateField(required=False)
     adults = serializers.IntegerField(min_value=1, default=1)
+    children = serializers.IntegerField(min_value=0, default=0,
+        help_text="Passengers aged 2-11 years")
+    infants = serializers.IntegerField(min_value=0, default=0,
+        help_text="Passengers aged under 2 years")
     travel_class = serializers.ChoiceField(
         choices=['ECONOMY', 'PREMIUM_ECONOMY', 'BUSINESS', 'FIRST'],
         default='ECONOMY'
@@ -112,15 +116,26 @@ class FlightSearchSerializer(serializers.Serializer):
         Validate that departure date is in the future
         """
         departure_date = data.get('departure_date')
+        return_date = data.get('return_date')
         today = datetime.now().date()
 
         if departure_date and departure_date < today:
             raise serializers.ValidationError("Departure date must be in the future")
 
-        # Validate return date if provided
-        return_date = data.get('return_date')
         if return_date and return_date < departure_date:
             raise serializers.ValidationError("Return date must be after departure date")
+
+        # Validate passenger counts
+        adults = data.get('adults', 1)
+        children = data.get('children', 0)
+        infants = data.get('infants', 0)
+
+        if infants > adults:
+            raise serializers.ValidationError("Number of infants cannot exceed number of adults")
+
+        total_passengers = adults + children + infants
+        if total_passengers > 9:
+            raise serializers.ValidationError("Maximum 9 passengers allowed per booking")
 
         return data
 
@@ -132,15 +147,37 @@ class FlightSegmentSerializer(serializers.Serializer):
 class MultiCityFlightSearchSerializer(serializers.Serializer):
     segments = FlightSegmentSerializer(many=True, min_length=2)
     adults = serializers.IntegerField(min_value=1, default=1)
+    children = serializers.IntegerField(min_value=0, default=0,
+        help_text="Passengers aged 2-11 years")
+    infants = serializers.IntegerField(min_value=0, default=0,
+        help_text="Passengers aged under 2 years")
     travel_class = serializers.ChoiceField(
         choices=['ECONOMY', 'PREMIUM_ECONOMY', 'BUSINESS', 'FIRST'],
         default='ECONOMY'
     )
     currency = serializers.CharField(max_length=3, default='USD')
 
+    def validate(self, data):
+        """
+        Validate passenger counts and segments
+        """
+        # Validate passenger counts
+        adults = data.get('adults', 1)
+        children = data.get('children', 0)
+        infants = data.get('infants', 0)
+
+        if infants > adults:
+            raise serializers.ValidationError("Number of infants cannot exceed number of adults")
+
+        total_passengers = adults + children + infants
+        if total_passengers > 9:
+            raise serializers.ValidationError("Maximum 9 passengers allowed per booking")
+
+        return data
+
     def validate_segments(self, value):
         """
-        Validate that at least 2 segments are provided
+        Validate that at least 2 segments are provided and dates are valid
         """
         if len(value) < 2:
             raise serializers.ValidationError("At least 2 segments are required for multi-city flights")

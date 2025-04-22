@@ -113,6 +113,7 @@ flight_booking_schema = extend_schema_view(
                     "flight_offer_ids": ["1", "2"],
                     "passengers": [
                         {
+                            "title": "MR",
                             "first_name": "John",
                             "last_name": "Doe",
                             "email": "john.doe@example.com",
@@ -204,6 +205,8 @@ flight_search_schema = extend_schema_view(
                     "destination": "LAX",
                     "departure_date": "2025-05-01",
                     "adults": 1,
+                    "children": 1,
+                    "infants": 1,
                     "travel_class": "ECONOMY",
                     "non_stop": False,
                     "currency": "USD"
@@ -231,6 +234,8 @@ flight_search_schema = extend_schema_view(
                     "departure_date": "2025-05-01",
                     "return_date": "2025-05-08",
                     "adults": 1,
+                    "children": 1,
+                    "infants": 1,
                     "travel_class": "ECONOMY",
                     "non_stop": False,
                     "currency": "USD"
@@ -272,6 +277,8 @@ flight_search_schema = extend_schema_view(
                     ],
                     "adults": 1,
                     "travel_class": "ECONOMY",
+                    "children": 1,
+                    "infants": 1,
                     "currency": "USD"
                 },
                 request_only=True

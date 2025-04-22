@@ -56,19 +56,62 @@ class AmadeusAPI:
         }
 
     def search_flights(self, origin: str, destination: str, departure_date: str,
-                  return_date: Optional[str] = None, adults: int = 1,
-                  travel_class: str = 'ECONOMY', non_stop: bool = False,
-                  currency: str = 'USD', max_results: int = 20) -> Dict:
+                    return_date: Optional[str] = None, adults: int = 1,
+                    children: int = 0, infants: int = 0,
+                    travel_class: str = 'ECONOMY', non_stop: bool = False,
+                    currency: str = 'USD', max_results: int = 20) -> Dict:
+        """
+        Search for flights using the Amadeus API
 
+        Args:
+            origin: Origin airport code
+            destination: Destination airport code
+            departure_date: Departure date (YYYY-MM-DD)
+            return_date: Return date for round trips (YYYY-MM-DD)
+            adults: Number of adult passengers (12+ years)
+            children: Number of child passengers (2-11 years)
+            infants: Number of infant passengers (<2 years)
+            travel_class: Cabin class
+            non_stop: Whether to search for non-stop flights only
+            currency: Currency code
+            max_results: Maximum number of results to return
+        """
         url = f"{self.base_url}/v2/shopping/flight-offers"
+
+        # Prepare travelers array with proper counts
+        travelers = []
+
+        # Add adult travelers
+        for i in range(adults):
+            travelers.append({
+                'id': str(i + 1),
+                'travelerType': 'ADULT'
+            })
+
+        # Add child travelers
+        child_offset = adults
+        for i in range(children):
+            travelers.append({
+                'id': str(child_offset + i + 1),
+                'travelerType': 'CHILD'
+            })
+
+        # Add infant travelers
+        infant_offset = adults + children
+        for i in range(infants):
+            travelers.append({
+                'id': str(infant_offset + i + 1),
+                'travelerType': 'INFANT'
+            })
 
         payload = {
             'originLocationCode': origin,
             'destinationLocationCode': destination,
             'departureDate': departure_date,
             'adults': adults,
+            'children': children,
+            'infants': infants,
             'travelClass': travel_class,
-            # Convert boolean to lowercase string
             'nonStop': str(non_stop).lower(),
             'currencyCode': currency,
             'max': max_results
@@ -84,18 +127,22 @@ class AmadeusAPI:
         else:
             raise Exception(f"Failed to search flights: {response.text}")
 
+
     def search_multi_city_flights(self, origin_destinations: List[Dict],
-                                 adults: int = 1, travel_class: str = 'ECONOMY',
-                                 currency: str = 'USD', max_results: int = 20) -> Dict:
+                                adults: int = 1, children: int = 0, infants: int = 0,
+                                travel_class: str = 'ECONOMY',
+                                currency: str = 'USD', max_results: int = 20) -> Dict:
         """
         Search for multi-city flights using Amadeus Flight Offers Search API
 
         Args:
             origin_destinations: List of origin-destination pairs with dates
                 [{'origin': 'NYC', 'destination': 'LON', 'date': '2025-06-01'},
-                 {'origin': 'LON', 'destination': 'PAR', 'date': '2025-06-05'},
-                 {'origin': 'PAR', 'destination': 'NYC', 'date': '2025-06-10'}]
-            adults: Number of adults
+                {'origin': 'LON', 'destination': 'PAR', 'date': '2025-06-05'},
+                {'origin': 'PAR', 'destination': 'NYC', 'date': '2025-06-10'}]
+            adults: Number of adult passengers (12+ years)
+            children: Number of child passengers (2-11 years)
+            infants: Number of infant passengers (<2 years)
             travel_class: Travel class (ECONOMY, PREMIUM_ECONOMY, BUSINESS, FIRST)
             currency: Currency code
             max_results: Maximum number of results to return
@@ -117,11 +164,30 @@ class AmadeusAPI:
                 }
             })
 
+        # Prepare travelers array with proper counts
         travelers = []
+
+        # Add adult travelers
         for i in range(adults):
             travelers.append({
-                'id': str(i + 1),  # Unique ID for each traveler
+                'id': str(i + 1),
                 'travelerType': 'ADULT'
+            })
+
+        # Add child travelers
+        child_offset = adults
+        for i in range(children):
+            travelers.append({
+                'id': str(child_offset + i + 1),
+                'travelerType': 'CHILD'
+            })
+
+        # Add infant travelers
+        infant_offset = adults + children
+        for i in range(infants):
+            travelers.append({
+                'id': str(infant_offset + i + 1),
+                'travelerType': 'INFANT'
             })
 
         payload = {
@@ -152,6 +218,7 @@ class AmadeusAPI:
             return response.json()
         else:
             raise Exception(f"Failed to search multi-city flights: {response.text}")
+
 
     def price_flight_offers(self, flight_offers: List[Dict]) -> Dict:
         """
