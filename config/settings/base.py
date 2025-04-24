@@ -535,6 +535,11 @@ SOCIALACCOUNT_PROVIDERS = {
         "SCOPE": ["email", "public_profile"],
         "AUTH_PARAMS": {"auth_type": "reauthenticate"},
         "METHOD": "oauth2",
+        "APP": {
+            "client_id": env("FACEBOOK_CLIENT_ID"),
+            "secret": env("FACEBOOK_CLIENT_SECRET"),
+            "key": ""
+        }
     },
     "apple": {
         "APP": {
