@@ -71,6 +71,7 @@ from drf_spectacular.utils import (
     OpenApiExample,
 )
 from rest_framework.exceptions import AuthenticationFailed
+from dj_rest_auth.serializers import JWTSerializer
 
 logger = logging.getLogger(__name__)
 
@@ -1216,7 +1217,7 @@ class GoogleLoginView(SocialLoginView):
     """
 
     adapter_class = GoogleOAuth2Adapter
-
+    # serializer_class = JWTSerializer
     @extend_schema(
         summary="Google OAuth Login",
         description="""

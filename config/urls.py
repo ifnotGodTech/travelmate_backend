@@ -57,8 +57,8 @@ urlpatterns += [
         name="api-docs",
     ),
     # dj-rest-auth
-    # path("dj-rest-auth/", include("dj_rest_auth.urls")),
-    # path("api/auth/registration/", include("dj_rest_auth.registration.urls")),  # User Registration
+    path("dj-rest-auth/", include("dj_rest_auth.urls")),
+    path("dj-rest-auth/registration/", include("dj_rest_auth.registration.urls")),  # User Registration
     path("api/auth/social/", include("allauth.socialaccount.urls")),  # Social Auth Setup
     path("api/auth/social/google/", GoogleLoginView.as_view(), name="google_login"),
     path("api/auth/social/facebook/", FacebookLoginView.as_view(), name="facebook_login"),
