@@ -59,6 +59,8 @@ ROOT_URLCONF = "config.urls"
 # https://docs.djangoproject.com/en/dev/ref/settings/#wsgi-application
 WSGI_APPLICATION = "config.wsgi.application"
 
+REST_USE_JWT = True
+
 # APPS
 # ------------------------------------------------------------------------------
 DJANGO_APPS = [
@@ -347,6 +349,8 @@ SOCIALACCOUNT_FORMS = {"signup": "core.applications.users.forms.UserSocialSignup
 SOCIALACCOUNT_QUERY_EMAIL = True
 SOCIALACCOUNT_AUTO_SIGNUP = True
 
+
+
 # django-rest-framework
 # -------------------------------------------------------------------------------
 # django-rest-framework - https://www.django-rest-framework.org/api-guide/settings/
@@ -376,6 +380,7 @@ CORS_ALLOWED_ORIGINS = [
     # "https://skeema.onrender.com",
     # "https://skeema.dev",
     "https://travelmate-dashboard-ji4j.vercel.app",
+    "https://travel-mate-byac.vercel.app"
 ]
 
 # By Default swagger ui is available only to admin user(s). You can change permission classes to change that
