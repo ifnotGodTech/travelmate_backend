@@ -1,32 +1,32 @@
-# General
-# ------------------------------------------------------------------------------
-USE_DOCKER=yes
-IPYTHONDIR=/app/.ipython
-# Redis
-# ------------------------------------------------------------------------------
-REDIS_URL=redis://redis:6379/0
+; # General
+; # ------------------------------------------------------------------------------
+; USE_DOCKER=yes
+; IPYTHONDIR=/app/.ipython
+; # Redis
+; # ------------------------------------------------------------------------------
+; REDIS_URL=redis://redis:6379/0
 
-# Celery
-# ------------------------------------------------------------------------------
+; # Celery
+; # ------------------------------------------------------------------------------
 
-# Flower
-CELERY_FLOWER_USER=debug
-CELERY_FLOWER_PASSWORD=debug
+; # Flower
+; CELERY_FLOWER_USER=debug
+; CELERY_FLOWER_PASSWORD=debug
 
-# amadeus
+; # amadeus
 
 
-AMADEUS_API_TESTING=True
-AMADEUS_API_TEST_KEY=J9NtGHQGdsBQr1og61dqafvQUGvpRg05
-AMADEUS_API_TEST_SECRET=WcQx4Dle945Jvfsu
-AMADEUS_API_LIVE_KEY=
-AMADEUS_API_LIVE_SECRET=
+; AMADEUS_API_TESTING=True
+; AMADEUS_API_TEST_KEY=J9NtGHQGdsBQr1og61dqafvQUGvpRg05
+; AMADEUS_API_TEST_SECRET=WcQx4Dle945Jvfsu
+; AMADEUS_API_LIVE_KEY=
+; AMADEUS_API_LIVE_SECRET=
 
-# Stripe
-STRIPE_PUBLISHABLE_TEST_KEY=pk_test_51NVZDJCcgYR1TR2J4puVK4xbv30u0NX9MQjIEtRNmlD6saUXppGlLfxNgOm1dMkl35N3VSIDn3IAea2MhaREWjZ200r7Qe0Iki
-STRIPE_SECRET_TEST_KEY=sk_test_51NVZDJCcgYR1TR2JPq2txDsyF7VIsn73ZJ4tu9NwLgA7IfcG950Ge1mabqUH0IdeMbeHrP7pUENdPuuPDo3im8Pu00nOt7x2xf
-STRIPE_API_TESTING=True
-STRIPE_WEBHOOK_SECRET=whsec_f2d18832f982011fae319508587da91e166a782e45db8e24e3ddf08be4b5a857
+; # Stripe
+; STRIPE_PUBLISHABLE_TEST_KEY=pk_test_51NVZDJCcgYR1TR2J4puVK4xbv30u0NX9MQjIEtRNmlD6saUXppGlLfxNgOm1dMkl35N3VSIDn3IAea2MhaREWjZ200r7Qe0Iki
+; STRIPE_SECRET_TEST_KEY=sk_test_51NVZDJCcgYR1TR2JPq2txDsyF7VIsn73ZJ4tu9NwLgA7IfcG950Ge1mabqUH0IdeMbeHrP7pUENdPuuPDo3im8Pu00nOt7x2xf
+; STRIPE_API_TESTING=True
+; STRIPE_WEBHOOK_SECRET=whsec_f2d18832f982011fae319508587da91e166a782e45db8e24e3ddf08be4b5a857
 
 
 ; GOOGLE_CLIENT_ID=283989752333-9n4hd14j9kc1p3v71dsup80t15gk295t.apps.googleusercontent.com
