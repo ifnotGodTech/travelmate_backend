@@ -301,7 +301,8 @@ message_create_schema = extend_schema(
         OpenApiExample(
             name="Create Message Request",
             value={
-                "content": "I've tried resetting my password but I'm still having issues."
+                "content": "I've tried resetting my password but I'm still having issues.",
+                "attachment": None  # Can be a file
             },
             request_only=True
         ),
@@ -313,6 +314,7 @@ message_create_schema = extend_schema(
                 "sender_id": 5,
                 "sender_name": "Jane Customer",
                 "content": "I've tried resetting my password but I'm still having issues.",
+                "attachment": "http://example.com/media/ticket_attachments/document.pdf",
                 "created_at": "2025-04-07T15:40:22Z",
                 "is_staff": False
             },

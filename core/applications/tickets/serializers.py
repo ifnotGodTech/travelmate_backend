@@ -3,6 +3,7 @@ from .models import Ticket, Message, EscalationLevel, EscalationReason
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema_field
+import os
 User = get_user_model()
 
 
@@ -55,14 +56,24 @@ class TicketSerializer(serializers.ModelSerializer):
     messages = MessageSerializer(many=True, read_only=True)
     escalation_level = EscalationLevelSerializer(read_only=True, allow_null=True)
     escalation_reason = EscalationReasonSerializer(read_only=True, allow_null=True)
+    priority = serializers.SerializerMethodField()  # Add this line
+
 
     class Meta:
         model = Ticket
         fields = ('id', 'ticket_id', 'title', 'category', 'description', 'status',
                   'created_at', 'updated_at', 'user', 'messages',
                   'escalated', 'escalation_level', 'escalation_reason',
-                  'escalation_response_time', 'escalation_note')
+                  'escalation_response_time', 'priority', 'escalation_note')
         read_only_fields = ('id', 'ticket_id', 'created_at', 'updated_at', 'escalated')
+
+    def get_priority(self, obj):
+        mapping = {
+            '1hr': 'High',
+            '4hrs': 'Medium',
+            '24hrs': 'Low',
+        }
+        return mapping.get(obj.escalation_response_time, None)
 
 class TicketCreateSerializer(serializers.ModelSerializer):
     class Meta:
@@ -112,10 +123,33 @@ class TicketEscalateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Ticket
         fields = ('escalation_level', 'escalation_reason', 'escalation_response_time', 'escalation_note')
+
 class MessageCreateSerializer(serializers.ModelSerializer):
+    attachment = serializers.FileField(
+        required=False,
+        allow_null=True,
+        max_length=10485760,  # 10MB limit
+        allow_empty_file=True
+    )
+
     class Meta:
         model = Message
         fields = ('content', 'attachment')
+
+    def validate_attachment(self, value):
+        if value:
+            # Limit file size (10MB)
+            if value.size > 10485760:
+                raise serializers.ValidationError("File size too large. Max size is 10MB.")
+
+            # Validate file extensions
+            valid_extensions = ['.pdf', '.doc', '.docx', '.jpg', '.jpeg', '.png']
+            ext = os.path.splitext(value.name)[1].lower()
+            if ext not in valid_extensions:
+                raise serializers.ValidationError(
+                    f"Unsupported file type. Allowed types: {', '.join(valid_extensions)}"
+                )
+        return value
 
 class TicketStatPeriodSerializer(serializers.Serializer):
     count = serializers.IntegerField()
