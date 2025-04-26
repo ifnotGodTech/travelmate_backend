@@ -72,6 +72,7 @@ from drf_spectacular.utils import (
 )
 from rest_framework.exceptions import AuthenticationFailed
 from dj_rest_auth.serializers import JWTSerializer
+from allauth.socialaccount.providers.oauth2.client import OAuth2Client
 
 logger = logging.getLogger(__name__)
 
@@ -1204,60 +1205,49 @@ class FacebookLoginView(SocialLoginView):
 
 
 
+
 class GoogleLoginView(SocialLoginView):
-    """
-    Google OAuth Login View
-
-    This endpoint allows users to authenticate using a Google OAuth access token.
-    Users must first obtain an access token from Google by signing in via Google OAuth.
-    Once they receive a valid access token, they can send it to this API to authenticate.
-
-    If the token is valid, the API will return a Django authentication token, which can be
-    used for subsequent authenticated requests..
-    """
-
     adapter_class = GoogleOAuth2Adapter
-    # serializer_class = JWTSerializer
+    client_class = OAuth2Client
+
     @extend_schema(
-        summary="Google OAuth Login",
+        summary="Google OAuth Login (JWT)",
         description="""
-        Authenticate users using Google OAuth.
+        Authenticate users using Google OAuth and return JWT tokens.
 
-        **How it Works:**
-        1. The user selects "Sign in with Google" in the frontend application.
-        2. Google provides an access token upon successful authentication.
-        3. The frontend sends this access token to this endpoint.
-        4. The API verifies the token with Google and, if valid:
-            - Creates a user account (if they are new).
-            - Returns a Django authentication token for further API requests.
+        **Flow:**
+        1. User signs in with Google on the frontend
+        2. Frontend receives Google access token
+        3. Frontend sends token to this endpoint
+        4. Backend verifies token with Google
+        5. If valid, returns JWT tokens for API authentication
 
-        **Request Format:**
-        Send a `POST` request with a valid `access_token` obtained from Google.
-
-        **Example Request:**
-        ```json
-        {
-            "access_token": "ya29.a0AfH6SM..."
-        }
-        ```
-
-        **Response Format:**
-        If authentication is successful, the API returns an authentication token.
-
-        **Example Response:**
-        ```json
-        {
-            "key": "7f4e265c8f8c5e64db..."
-        }
-        ```
+        **Note:** The Google access token should be obtained through official Google OAuth flow.
         """,
+        examples=[
+            OpenApiExample(
+                'Example Request',
+                value={"access_token": "ya29.a0AfH6SM..."},
+                request_only=True
+            ),
+            OpenApiExample(
+                'Success Response',
+                value={
+                    "refresh": "eyJhbGciOiJIUz...",
+                    "access": "eyJhbGciOiJIUz..."
+                },
+                response_only=True,
+                status_codes=['200']
+            )
+        ],
         request={
             "application/json": {
                 "type": "object",
                 "properties": {
                     "access_token": {
                         "type": "string",
-                        "description": "Google OAuth access token obtained after successful login with Google."
+                        "description": "Access token from Google OAuth flow",
+                        "example": "ya29.a0AfH6SM..."
                     }
                 },
                 "required": ["access_token"]
@@ -1267,98 +1257,47 @@ class GoogleLoginView(SocialLoginView):
             200: {
                 "type": "object",
                 "properties": {
-                    "key": {
+                    "refresh": {
                         "type": "string",
-                        "description": "Django authentication token to be used in future requests."
+                        "description": "JWT refresh token (long-lived)"
+                    },
+                    "access": {
+                        "type": "string",
+                        "description": "JWT access token (short-lived)"
                     }
                 }
             },
             400: {
-                "description": "Invalid access token or authentication failed."
-            }
-        },
-    )
-    def post(self, request, *args, **kwargs):
-        return super().post(request, *args, **kwargs)
-
-
-class AppleLoginView(SocialLoginView):
-    """
-    Apple OAuth Login View
-
-    This endpoint allows users to authenticate using an Apple OAuth access token.
-    Users must first obtain an access token from Apple by signing in via "Sign in with Apple."
-    Once they receive a valid access token, they can send it to this API to authenticate.
-
-    If the token is valid, the API will return a Django authentication token, which can be
-    used for subsequent authenticated requests.
-    """
-
-    adapter_class = AppleOAuth2Adapter
-
-    @extend_schema(
-        summary="Apple OAuth Login",
-        description="""
-        Authenticate users using Apple OAuth.
-
-        **How it Works:**
-        1. The user selects "Sign in with Apple" in the frontend application.
-        2. Apple provides an access token upon successful authentication.
-        3. The frontend sends this access token to this endpoint.
-        4. The API verifies the token with Apple and, if valid:
-            - Creates a user account (if they are new).
-            - Returns a Django authentication token for further API requests.
-
-        **Request Format:**
-        Send a `POST` request with a valid `access_token` obtained from Apple.
-
-        **Example Request:**
-        ```json
-        {
-            "access_token": "eyJraWQiOiJ..."
-        }
-        ```
-
-        **Response Format:**
-        If authentication is successful, the API returns an authentication token.
-
-        **Example Response:**
-        ```json
-        {
-            "key": "7f4e265c8f8c5e64db..."
-        }
-        ```
-        """,
-        request={
-            "application/json": {
-                "type": "object",
-                "properties": {
-                    "access_token": {
-                        "type": "string",
-                        "description": "Apple OAuth access token obtained after successful login with Apple."
-                    }
-                },
-                "required": ["access_token"]
-            }
-        },
-        responses={
-            200: {
-                "type": "object",
-                "properties": {
-                    "key": {
-                        "type": "string",
-                        "description": "Django authentication token to be used in future requests."
+                "description": "Invalid Google token or authentication failed",
+                "examples": {
+                    "application/json": {
+                        "error": "Invalid Google access token"
                     }
                 }
             },
-            400: {
-                "description": "Invalid access token or authentication failed."
+            401: {
+                "description": "Authentication failed",
+                "examples": {
+                    "application/json": {
+                        "detail": "Authentication credentials were not provided."
+                    }
+                }
             }
         },
+        tags=['Authentication']
     )
     def post(self, request, *args, **kwargs):
-        return super().post(request, *args, **kwargs)
+        response = super().post(request, *args, **kwargs)
 
+        if response.status_code == 200:
+            user = self.user
+            refresh = RefreshToken.for_user(user)
+            data = {
+                'refresh': str(refresh),
+                'access': str(refresh.access_token),
+            }
+            return Response(data)
+        return response
 
 @extend_schema(tags=["Superuser Management"])
 # class AdminUserViewSet(ModelViewSet):
