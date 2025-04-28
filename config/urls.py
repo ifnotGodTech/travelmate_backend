@@ -7,7 +7,7 @@ from django.urls import include
 from django.urls import path
 from django.views import defaults as default_views
 from django.views.generic import TemplateView
-from core.applications.users.api.views import AppleLoginView, FacebookLoginView, GoogleLoginView
+from core.applications.users.api.views import FacebookLoginView, GoogleLoginView
 from drf_spectacular.views import SpectacularAPIView
 from drf_spectacular.views import SpectacularSwaggerView
 from rest_framework.authtoken.views import obtain_auth_token
@@ -62,7 +62,7 @@ urlpatterns += [
     path("api/auth/social/", include("allauth.socialaccount.urls")),  # Social Auth Setup
     path("api/auth/social/google/", GoogleLoginView.as_view(), name="google_login"),
     path("api/auth/social/facebook/", FacebookLoginView.as_view(), name="facebook_login"),
-    path("api/auth/social/apple/", AppleLoginView.as_view(), name="apple_login"),
+    # path("api/auth/social/apple/", AppleLoginView.as_view(), name="apple_login"),
 ]
 
 if settings.DEBUG:
