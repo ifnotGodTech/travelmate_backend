@@ -4,7 +4,7 @@ from drf_spectacular.types import OpenApiTypes
 from .serializers import (
     TicketSerializer, MessageSerializer, TicketCreateSerializer,
     TicketEscalateSerializer, MessageCreateSerializer,
-    EscalationLevelSerializer, EscalationReasonSerializer
+    EscalationLevelSerializer
 )
 
 # Ticket ViewSet schema definitions
@@ -181,9 +181,9 @@ ticket_escalate_schema = extend_schema(
             name="Escalate Request",
             value={
                 "escalation_level": 2,
-                "escalation_reason": 3,
-                "escalation_note": "Customer has requested expedited resolution",
-                "escalation_response_time": "24h"
+                "escalation_reason": "Issue requires specialized technical knowledge and expertise",
+                "escalation_response_time": "24hrs",
+                "escalation_note": "Customer has requested expedited resolution"
             },
             request_only=True
         )
@@ -411,7 +411,7 @@ escalation_reason_list_schema = extend_schema(
     summary="List all escalation reasons",
     description="Returns all available escalation reasons. This endpoint is restricted to admin users only.",
     responses={
-        200: EscalationReasonSerializer(many=True),
+        # 200: EscalationReasonSerializer(many=True),
         401: OpenApiResponse(description="Authentication credentials were not provided."),
         403: OpenApiResponse(description="You do not have permission to access this view.")
     },
@@ -444,9 +444,9 @@ escalation_reason_list_schema = extend_schema(
 escalation_reason_create_schema = extend_schema(
     summary="Create a new escalation reason",
     description="Create a new escalation reason. This endpoint is restricted to admin users only.",
-    request=EscalationReasonSerializer,
+    # request=EscalationReasonSerializer,
     responses={
-        201: EscalationReasonSerializer,
+        # 201: EscalationReasonSerializer,
         400: OpenApiResponse(description="Invalid input. See error details."),
         401: OpenApiResponse(description="Authentication credentials were not provided."),
         403: OpenApiResponse(description="You do not have permission to access this view.")
@@ -564,7 +564,7 @@ escalation_reason_retrieve_schema = extend_schema(
         )
     ],
     responses={
-        200: EscalationReasonSerializer,
+        # 200: EscalationReasonSerializer,
         401: OpenApiResponse(description="Authentication credentials were not provided."),
         403: OpenApiResponse(description="You do not have permission to access this view."),
         404: OpenApiResponse(description="Escalation reason not found.")
@@ -583,9 +583,9 @@ escalation_reason_update_schema = extend_schema(
             description="A unique integer value identifying the escalation reason."
         )
     ],
-    request=EscalationReasonSerializer,
+    # request=EscalationReasonSerializer,
     responses={
-        200: EscalationReasonSerializer,
+        # 200: EscalationReasonSerializer,
         400: OpenApiResponse(description="Invalid input. See error details."),
         401: OpenApiResponse(description="Authentication credentials were not provided."),
         403: OpenApiResponse(description="You do not have permission to access this view."),
@@ -605,9 +605,9 @@ escalation_reason_partial_update_schema = extend_schema(
             description="A unique integer value identifying the escalation reason."
         )
     ],
-    request=EscalationReasonSerializer,
+    # request=EscalationReasonSerializer,
     responses={
-        200: EscalationReasonSerializer,
+        # 200: EscalationReasonSerializer,
         400: OpenApiResponse(description="Invalid input. See error details."),
         401: OpenApiResponse(description="Authentication credentials were not provided."),
         403: OpenApiResponse(description="You do not have permission to access this view."),

@@ -13,12 +13,6 @@ class EscalationLevel(models.Model):
     def __str__(self):
         return self.name
 
-class EscalationReason(models.Model):
-    reason = models.CharField(max_length=255)
-
-    def __str__(self):
-        return self.reason
-
 class Ticket(models.Model):
     CATEGORY_CHOICES = [
         ('Flight', 'Flight'),
@@ -50,7 +44,7 @@ class Ticket(models.Model):
     # Escalation fields
     escalated = models.BooleanField(default=False)
     escalation_level = models.ForeignKey(EscalationLevel, on_delete=models.SET_NULL, null=True, blank=True)
-    escalation_reason = models.ForeignKey(EscalationReason, on_delete=models.SET_NULL, null=True, blank=True)
+    escalation_reason = models.TextField(blank=True, null=True)
     escalation_response_time = models.CharField(max_length=10, choices=RESPONSE_TIME_CHOICES, null=True, blank=True)
     escalation_note = models.TextField(blank=True, null=True)
 
