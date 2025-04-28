@@ -189,13 +189,6 @@ class TransferSearchViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Validate required parameters
-        if not all([pickup_location, pickup_date, pickup_time]):
-            return Response(
-                {'error': 'Missing required parameters: pickup_location, pickup_date, pickup_time'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
         # For city destinations, we need an address
         if not data.get('end_address') and not dropoff_location.isalpha():
             return Response(
@@ -282,17 +275,32 @@ class TransferSearchViewSet(viewsets.ViewSet):
                     'suggestion': 'You can use a geocoding service like Google Maps API to get coordinates for the address.'
                 }, status=status.HTTP_400_BAD_REQUEST)
 
+            # NEW CODE: Sort transfers to prioritize "Drivania" providers first
+            drivania_transfers = []
+            other_transfers = []
+
+            for transfer in transfers:
+                provider_name = transfer.get('provider', {}).get('name', '')
+                if provider_name == "Drivania":
+                    drivania_transfers.append(transfer)
+                else:
+                    other_transfers.append(transfer)
+
+            # Combine the lists to have Drivania transfers first
+            sorted_transfers = drivania_transfers + other_transfers
+
             # Store both individual transfer details and overall search results
             search_results_cache_key = 'recent_transfer_search_results'
-            cache.set(search_results_cache_key, transfers, 3600)
+            cache.set(search_results_cache_key, sorted_transfers, 3600)
 
             # Cache each transfer individually for details lookup
-            for transfer in transfers:
+            for transfer in sorted_transfers:
                 if 'id' in transfer:
                     cache_key = f"transfer_details:{transfer['id']}"
                     cache.set(cache_key, transfer, 3600)  # Cache for 1 hour
 
-            return Response(transfers)
+            # Return the sorted transfers instead of the original transfers
+            return Response(sorted_transfers)
         except ValueError:
             return Response({'error': 'Invalid date/time format'}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
@@ -650,6 +658,13 @@ class CarBookingViewSet(viewsets.ModelViewSet):
             amadeus_service = AmadeusService()
             booking = car_booking.booking  # Access the base Booking
 
+            # Get the transfer ID from car_booking
+            transfer_id = car_booking.transfer_id
+
+            if not transfer_id:
+                logger.error("Missing transfer_id, required for booking")
+                return False
+
             # Get payment using the correct related name
             payment = Payment.objects.filter(
                 booking=booking,
@@ -657,11 +672,11 @@ class CarBookingViewSet(viewsets.ModelViewSet):
             ).first()
 
             # Retrieve the original transfer details from cache
-            cache_key = f"transfer_details:{car_booking.transfer_id}"
+            cache_key = f"transfer_details:{transfer_id}"
             transfer_details = cache.get(cache_key)
 
             if not transfer_details:
-                logger.error(f"No transfer details found for transfer_id: {car_booking.transfer_id}")
+                logger.error(f"No transfer details found for transfer_id: {transfer_id}")
                 return False
 
             # Get location objects from database
@@ -688,7 +703,7 @@ class CarBookingViewSet(viewsets.ModelViewSet):
                         },
                         "billingAddress": {
                             "line": dropoff_location.address or transfer_details['end_location']['address'],
-                            "zip": transfer_details['end_location'].get('zipcode', ''),
+                            "zip": transfer_details['end_location'].get('zipcode', '75007'),
                             "countryCode": dropoff_location.country or transfer_details['end_location']['country'],
                             "cityName": dropoff_location.city or transfer_details['end_location']['city']
                         }
@@ -696,8 +711,8 @@ class CarBookingViewSet(viewsets.ModelViewSet):
                     "start": {
                         "dateTime": pickup_datetime,
                         "address": {
-                            "line": pickup_location.address or transfer_details['start_location'].get('address', ''),
-                            "cityName": pickup_location.city or transfer_details['start_location'].get('city', '')
+                            "line": dropoff_location.address or transfer_details['end_location']['address'],
+                            "cityName": dropoff_location.city or transfer_details['end_location']['city']
                         }
                     }
                 }
@@ -719,8 +734,8 @@ class CarBookingViewSet(viewsets.ModelViewSet):
             # Log the complete payload for debugging
             logger.info(f"Creating transfer booking with payload: {amadeus_payload}")
 
-            # Make API call to create booking
-            response = amadeus_service.create_transfer_booking(amadeus_payload)
+            # Make API call to create booking, passing the transfer_id parameter
+            response = amadeus_service.create_transfer_booking(amadeus_payload, transfer_id)
 
             if response.status_code != 201:
                 error_msg = f"Amadeus API error: {response.status_code} - {response.text}"
@@ -823,6 +838,8 @@ class CarBookingViewSet(viewsets.ModelViewSet):
                 detail="An unexpected error occurred while cancelling booking",
                 code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
 
 
 @payment_schema

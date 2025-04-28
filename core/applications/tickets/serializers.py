@@ -1,8 +1,9 @@
 from rest_framework import serializers
-from .models import Ticket, Message, EscalationLevel, EscalationReason
+from .models import Ticket, Message, EscalationLevel
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema_field
+import os
 User = get_user_model()
 
 
@@ -45,77 +46,84 @@ class EscalationLevelSerializer(serializers.ModelSerializer):
         model = EscalationLevel
         fields = ('id', 'name', 'email')
 
-class EscalationReasonSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = EscalationReason
-        fields = ('id', 'reason')
-
 class TicketSerializer(serializers.ModelSerializer):
     user = UserProfileSerializer(read_only=True)
     messages = MessageSerializer(many=True, read_only=True)
     escalation_level = EscalationLevelSerializer(read_only=True, allow_null=True)
-    escalation_reason = EscalationReasonSerializer(read_only=True, allow_null=True)
+    priority = serializers.SerializerMethodField()
 
     class Meta:
         model = Ticket
         fields = ('id', 'ticket_id', 'title', 'category', 'description', 'status',
                   'created_at', 'updated_at', 'user', 'messages',
                   'escalated', 'escalation_level', 'escalation_reason',
-                  'escalation_response_time', 'escalation_note')
+                  'escalation_response_time', 'priority', 'escalation_note')
         read_only_fields = ('id', 'ticket_id', 'created_at', 'updated_at', 'escalated')
+
+    def get_priority(self, obj):
+        mapping = {
+            '1hr': 'High',
+            '4hrs': 'Medium',
+            '24hrs': 'Low',
+        }
+        return mapping.get(obj.escalation_response_time, None)
 
 class TicketCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Ticket
         fields = ('title', 'category', 'description')
 
-        # def create(self, validated_data):
-        #     # Get the current year
-        #     year = timezone.now().year
-
-        #     # Get the last ticket for the current year
-        #     last_ticket = Ticket.objects.filter(
-        #         ticket_id__startswith=f'TKT{year}'
-        #     ).order_by('ticket_id').last()
-
-        #     if last_ticket:
-        #         last_number = int(last_ticket.ticket_id.split('-')[-1])
-        #         new_number = last_number + 1
-        #     else:
-        #         new_number = 1
-
-        #     # Generate the new ticket ID
-        #     ticket_id = f'TKT{year}-{new_number:03d}'
-
-        #     # Create the ticket with the generated ID
-        #     ticket = Ticket.objects.create(
-        #         ticket_id=ticket_id,
-        #         **validated_data
-        #     )
-
-        #     return ticket
-
-
-
 class TicketEscalateSerializer(serializers.ModelSerializer):
     escalation_level = serializers.PrimaryKeyRelatedField(
         queryset=EscalationLevel.objects.all(),
-        allow_null=False,  # Changed from True to False
-        required=True      # Explicitly require this field
+        allow_null=False,
+        required=True
     )
-    escalation_reason = serializers.PrimaryKeyRelatedField(
-        queryset=EscalationReason.objects.all(),
-        allow_null=False,  # Changed from True to False
-        required=True      # Explicitly require this field
+    escalation_reason = serializers.CharField(
+        required=True,
+        allow_null=False,
+        allow_blank=False
+    )
+    escalation_response_time = serializers.ChoiceField(
+        choices=Ticket.RESPONSE_TIME_CHOICES,
+        required=True
+    )
+    escalation_note = serializers.CharField(
+        required=False,
+        allow_null=True,
+        allow_blank=True
     )
 
     class Meta:
         model = Ticket
         fields = ('escalation_level', 'escalation_reason', 'escalation_response_time', 'escalation_note')
+
 class MessageCreateSerializer(serializers.ModelSerializer):
+    attachment = serializers.FileField(
+        required=False,
+        allow_null=True,
+        max_length=10485760,  # 10MB limit
+        allow_empty_file=True
+    )
+
     class Meta:
         model = Message
         fields = ('content', 'attachment')
+
+    def validate_attachment(self, value):
+        if value:
+            # Limit file size (10MB)
+            if value.size > 10485760:
+                raise serializers.ValidationError("File size too large. Max size is 10MB.")
+
+            # Validate file extensions
+            valid_extensions = ['.pdf', '.doc', '.docx', '.jpg', '.jpeg', '.png']
+            ext = os.path.splitext(value.name)[1].lower()
+            if ext not in valid_extensions:
+                raise serializers.ValidationError(
+                    f"Unsupported file type. Allowed types: {', '.join(valid_extensions)}"
+                )
+        return value
 
 class TicketStatPeriodSerializer(serializers.Serializer):
     count = serializers.IntegerField()

@@ -6,10 +6,8 @@ from .views import (
     AdminTicketViewSet,
     TicketMessageListCreateView,
     MessageViewSet,
-    EscalationLevelViewSet,
-    EscalationReasonViewSet
+    EscalationLevelViewSet
 )
-import sys
 
 app_name = 'tickets'
 
@@ -23,7 +21,6 @@ admin_router = DefaultRouter()
 admin_router.register(r'tickets', AdminTicketViewSet, basename='admin-ticket')
 admin_router.register(r'messages', MessageViewSet, basename='admin-message')
 admin_router.register(r'escalation-levels', EscalationLevelViewSet, basename='escalation-level')
-admin_router.register(r'escalation-reasons', EscalationReasonViewSet, basename='escalation-reason')
 
 urlpatterns = [
     # Regular user routes
@@ -42,16 +39,3 @@ urlpatterns = [
          TicketMessageListCreateView.as_view(),
          name='admin-ticket-message-list'),
 ]
-
-# # Print all registered routes
-# print("\n=== REGISTERED API ROUTES ===")
-# print("\nREGULAR USER ROUTES (with api/ added at root):")
-# for route in user_router.urls:
-#     print(f"  /api/{route.pattern}")
-# print("  /api/tickets/<int:ticket_pk>/messages/")
-
-# print("\nADMIN ROUTES (with api/ added at root):")
-# for route in admin_router.urls:
-#     print(f"  /api/admin/{route.pattern}")
-# print("  /api/admin/tickets/<int:ticket_pk>/messages/")
-# print("\n=============================\n")

@@ -7,11 +7,11 @@ from django.db import models
 from django.conf import settings
 from datetime import timedelta
 from django.utils import timezone
-from .models import Ticket, Message, EscalationLevel, EscalationReason
+from .models import Ticket, Message, EscalationLevel
 from .serializers import (
     TicketSerializer, MessageSerializer, TicketCreateSerializer,
     TicketEscalateSerializer, MessageCreateSerializer,
-    EscalationLevelSerializer, EscalationReasonSerializer,     TicketEscalatedStatsSerializer,
+    EscalationLevelSerializer, TicketEscalatedStatsSerializer,
     TicketResolutionStatsSerializer,
     CategoryStatsSerializer,
     EscalationLevelStatsSerializer
@@ -23,15 +23,12 @@ from .schema import (
     ticket_escalate_schema, ticket_resolve_schema, ticket_pending_schema,
     ticket_resolved_schema, message_list_schema, message_create_schema,
     message_retrieve_schema, escalation_level_list_schema,
-    escalation_level_create_schema, escalation_reason_list_schema,
-    escalation_reason_create_schema, message_update_schema,
+    escalation_level_create_schema, message_update_schema,
     message_partial_update_schema, message_destroy_schema,
     message_list_all_schema, admin_ticket_list_schema,
     admin_ticket_create_schema, admin_ticket_retrieve_schema,
     admin_ticket_update_schema, admin_ticket_partial_update_schema,
-    admin_ticket_destroy_schema, escalation_reason_retrieve_schema,
-    escalation_reason_update_schema, escalation_reason_partial_update_schema,
-    escalation_reason_destroy_schema, escalation_level_retrieve_schema,
+    admin_ticket_destroy_schema, escalation_level_retrieve_schema,
     escalation_level_update_schema, escalation_level_partial_update_schema,
     escalation_level_destroy_schema, admin_ticket_escalated_stats_schema,
     admin_ticket_resolution_stats_schema, admin_ticket_all_stats_schema,
@@ -60,22 +57,6 @@ class IsAdminOrOwner(permissions.BasePermission):
 class EscalationLevelViewSet(viewsets.ModelViewSet):
     queryset = EscalationLevel.objects.all()
     serializer_class = EscalationLevelSerializer
-    permission_classes = [permissions.IsAdminUser]
-
-
-
-
-@extend_schema_view(
-    list=escalation_reason_list_schema,
-    create=escalation_reason_create_schema,
-    retrieve=escalation_reason_retrieve_schema,
-    update=escalation_reason_update_schema,
-    partial_update=escalation_reason_partial_update_schema,
-    destroy=escalation_reason_destroy_schema
-)
-class EscalationReasonViewSet(viewsets.ModelViewSet):
-    queryset = EscalationReason.objects.all()
-    serializer_class = EscalationReasonSerializer
     permission_classes = [permissions.IsAdminUser]
 
 @extend_schema_view(
@@ -224,10 +205,7 @@ class AdminTicketViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN
             )
 
-        # Log received data for debugging
-        print(f"Escalation request data: {request.data}")
-
-        # Check if escalation_level_id is in the request data
+        # Check if escalation_level is in the request data
         if 'escalation_level' not in request.data:
             return Response(
                 {"detail": "escalation_level field is required"},
@@ -263,7 +241,6 @@ class AdminTicketViewSet(viewsets.ModelViewSet):
                 user_first_name = user_profile.first_name
                 user_last_name = user_profile.last_name
             except Profile.DoesNotExist:
-                # Fallback if profile doesn't exist
                 user_first_name = "Unknown"
                 user_last_name = "Customer"
 
@@ -281,15 +258,15 @@ class AdminTicketViewSet(viewsets.ModelViewSet):
             Email: {ticket.user.email}
 
             Escalation Level: {ticket.escalation_level.name}
-            Reason: {ticket.escalation_reason.reason}
+            Reason: {ticket.escalation_reason}
             """
 
             # Add response time if available
-            if hasattr(ticket, 'get_escalation_response_time_display'):
-                message += f"\nResponse Time: {ticket.get_escalation_response_time_display()}"
+            if ticket.escalation_response_time:
+                message += f"\nResponse Time: {dict(ticket.RESPONSE_TIME_CHOICES)[ticket.escalation_response_time]}"
 
             # Add note if available
-            if hasattr(ticket, 'escalation_note') and ticket.escalation_note:
+            if ticket.escalation_note:
                 message += f"\nNote: {ticket.escalation_note}"
 
             # Send email notification
@@ -318,10 +295,7 @@ class AdminTicketViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_200_OK
                 )
 
-        # If serializer validation failed
-        print(f"Serializer errors: {serializer.errors}")
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
 
     @action(detail=True, methods=['post'])
     def resolve(self, request, pk=None):
@@ -340,8 +314,6 @@ class AdminTicketViewSet(viewsets.ModelViewSet):
             {"detail": "Ticket resolved successfully."},
             status=status.HTTP_200_OK
         )
-
-
 
 @extend_schema_view(
     list=ticket_list_schema,

@@ -327,12 +327,13 @@ class AmadeusService:
 
         return results
 
-    def create_transfer_booking(self, booking_data):
+    def create_transfer_booking(self, booking_data, transfer_id):
         """
         Create a transfer booking with Amadeus API
         """
         try:
-            url = f"{self.base_url}/v1/booking/transfer-bookings"
+            # Include the transfer offer ID as a query parameter
+            url = f"{self.base_url}/v1/ordering/transfer-orders?offerId={transfer_id}"
             headers = self._get_headers()
 
             logger.info(f"Creating transfer booking with payload: {booking_data}")
@@ -368,12 +369,17 @@ class AmadeusService:
             logger.error(f"Unexpected error in create_transfer_booking: {e}", exc_info=True)
             raise
 
-    def cancel_transfer_booking(self, booking_reference):
+    def cancel_transfer_booking(self, booking_reference, confirmation_number=None):
         """
         Cancel a transfer booking with Amadeus API
         """
         try:
-            url = f"{self.base_url}/v1/booking/transfer-bookings/{booking_reference}"
+            url = f"{self.base_url}/v1/ordering/transfer-orders/{booking_reference}/transfers/cancellation"
+
+            # Add confirmation number as query parameter if provided
+            if confirmation_number:
+                url += f"?confirmNbr={confirmation_number}"
+
             headers = self._get_headers()
 
             logger.info(f"Cancelling transfer booking: {booking_reference}")

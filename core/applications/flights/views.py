@@ -1276,7 +1276,7 @@ class FlightSearchViewSet(viewsets.ViewSet):
             cities_data = self.amadeus_api.search_cities(
                 keyword=keyword,
                 country_code=country_code if country_code else None,
-                max_results=10,
+                max_results=20,
                 include='AIRPORTS'
             )
 
@@ -1284,7 +1284,7 @@ class FlightSearchViewSet(viewsets.ViewSet):
 
             if 'data' in cities_data:
                 for city in cities_data['data']:
-                    city_name = city.get('name')
+                    city_name = city.get('name', '').upper()
                     country_code = city.get('address', {}).get('countryCode')
 
                     # Add city itself
@@ -1297,7 +1297,8 @@ class FlightSearchViewSet(viewsets.ViewSet):
                         'countryName': self._get_country_name(country_code),  # Helper function needed
                         'geoCode': city.get('geoCode'),
                         'displayName': f"{city.get('iataCode')} - {city_name} ({self._get_country_name(country_code)})",
-                        'type': 'CITY'
+                        'type': 'CITY',
+                        'priority': 1 if city_name.startswith(keyword) else 2
                     }
                     formatted_results.append(city_item)
 
@@ -1314,6 +1315,7 @@ class FlightSearchViewSet(viewsets.ViewSet):
 
                                 # Get detailed airport info if available
                                 airport_info = airport_details.get(airport_id, {})
+                                airport_name = airport_info.get('name', '').upper()
 
                                 airport_item = {
                                     'id': airport_id,
@@ -1324,11 +1326,19 @@ class FlightSearchViewSet(viewsets.ViewSet):
                                     'countryName': self._get_country_name(country_code),
                                     'geoCode': airport_info.get('geoCode'),
                                     'displayName': f"{airport_info.get('iataCode', airport_id)} - {airport_info.get('name', '')} ({city_name})",
-                                    'type': 'AIRPORT'
+                                    'type': 'AIRPORT',
+                                    'priority': 1 if airport_name.startswith(keyword) else 2
                                 }
                                 formatted_results.append(airport_item)
 
-            return Response(formatted_results, status=status.HTTP_200_OK)
+                # Sort results based on priority and then alphabetically
+                formatted_results.sort(key=lambda x: (
+                    x['priority'],  # Sort by priority first (1 before 2)
+                    0 if x['iataCode'].startswith(keyword) else 1,  # IATA codes starting with keyword come first
+                    x['name']  # Then alphabetically by name
+                ))
+
+            return Response(formatted_results[:10], status=status.HTTP_200_OK)
         except Exception as e:
             return Response(
                 {"error": str(e)},
