@@ -226,7 +226,7 @@ class AmadeusAPI:
 
         Args:
             flight_offers: List of flight offers from the search API
-          but
+
         Returns:
             Dict containing priced flight offers
         """
@@ -417,3 +417,102 @@ class AmadeusAPI:
         # If not in cache, we need to inform the user
         # that the flight details are no longer available
         raise Exception("Flight details not found. Please perform a new search.")
+
+    def get_airline_names(self, carrier_codes: List[str]) -> Dict[str, str]:
+        """
+        Get airline names for a list of carrier codes using Amadeus API
+
+        Args:
+            carrier_codes: List of airline carrier codes (e.g., ['BA', 'AA', 'LH'])
+
+        Returns:
+            Dict mapping carrier codes to airline names
+        """
+        # First check cache
+        airline_names = {}
+        missing_codes = []
+
+        for code in carrier_codes:
+            cached_name = cache.get(f'airline_name_{code}')
+            if cached_name:
+                airline_names[code] = cached_name
+            else:
+                missing_codes.append(code)
+
+        if not missing_codes:
+            return airline_names
+
+        # Fetch missing airlines from Amadeus API
+        try:
+            # Convert list to comma-separated string
+            codes_param = ','.join(missing_codes)
+            url = f"{self.base_url}/v1/reference-data/airlines"
+            params = {'airlineCodes': codes_param}
+
+            response = requests.get(
+                url,
+                headers=self._get_headers(),
+                params=params
+            )
+
+            if response.status_code == 200:
+                data = response.json().get('data', [])
+
+                # Process each airline and cache the results
+                for airline in data:
+                    code = airline.get('iataCode')
+                    name = airline.get('businessName') or airline.get('commonName')
+                    if code and name:
+                        # Cache for 24 hours (airline names don't change often)
+                        cache.set(f'airline_name_{code}', name, timeout=86400)
+                        airline_names[code] = name
+
+            return airline_names
+
+        except Exception as e:
+            print(f"Error fetching airline names: {str(e)}")
+            return airline_names
+
+    def _enrich_flight_data_with_airline_names(self, flight_offers: List[Dict]) -> List[Dict]:
+        """
+        Enrich flight offers data with airline names
+        """
+        if not flight_offers:
+            return flight_offers
+
+        # Collect all unique carrier codes
+        carrier_codes = set()
+        for offer in flight_offers:
+            for itinerary in offer.get('itineraries', []):
+                for segment in itinerary.get('segments', []):
+                    carrier_codes.add(segment.get('carrierCode'))
+                    if 'operating' in segment:
+                        carrier_codes.add(segment['operating'].get('carrierCode'))
+
+        # Remove None values if any
+        carrier_codes.discard(None)
+
+        # Get airline names for all carrier codes
+        airline_names = self.get_airline_names(list(carrier_codes))
+
+        # Add airline names to the flight offers
+        for offer in flight_offers:
+            for itinerary in offer.get('itineraries', []):
+                for segment in itinerary.get('segments', []):
+                    carrier_code = segment.get('carrierCode')
+                    if carrier_code and carrier_code in airline_names:
+                        segment['airline'] = {
+                            'code': carrier_code,
+                            'name': airline_names[carrier_code]
+                        }
+
+                    # Add operating airline name if different
+                    if 'operating' in segment:
+                        op_carrier_code = segment['operating'].get('carrierCode')
+                        if op_carrier_code and op_carrier_code in airline_names:
+                            segment['operating']['airline'] = {
+                                'code': op_carrier_code,
+                                'name': airline_names[op_carrier_code]
+                            }
+
+        return flight_offers

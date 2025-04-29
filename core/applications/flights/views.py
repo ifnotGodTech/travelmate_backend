@@ -1019,7 +1019,6 @@ class FlightSearchViewSet(viewsets.ViewSet):
         """
         serializer = FlightSearchSerializer(data=request.data)
 
-
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1052,7 +1051,7 @@ class FlightSearchViewSet(viewsets.ViewSet):
                 currency=currency
             )
 
-             # Post-process flight offers
+            # Post-process flight offers
             if 'data' in flight_offers:
                 # Force oneWay to true for all offers
                 for offer in flight_offers['data']:
@@ -1064,6 +1063,9 @@ class FlightSearchViewSet(viewsets.ViewSet):
                         offer for offer in flight_offers['data']
                         if len(offer.get('itineraries', [{}])[0].get('segments', [])) == 1
                     ]
+
+                # Enrich with airline names
+                flight_offers['data'] = self.amadeus_api._enrich_flight_data_with_airline_names(flight_offers['data'])
 
                 # Cache the offers
                 for offer in flight_offers['data']:
@@ -1139,15 +1141,17 @@ class FlightSearchViewSet(viewsets.ViewSet):
                 currency=currency
             )
 
-            # After getting flight_offers but before returning Response
+            # Post-process flight offers
             if 'data' in flight_offers:
+                # Enrich with airline names
+                flight_offers['data'] = self.amadeus_api._enrich_flight_data_with_airline_names(flight_offers['data'])
+
+                # Cache the offers
                 for offer in flight_offers['data']:
                     if 'id' in offer:
-                        # Cache by offer ID
                         cache_key = f"flight_offer_{offer['id']}"
                         cache.set(cache_key, offer, timeout=3600)
 
-                        # Also cache by segment IDs for easier lookup later
                         for itinerary in offer.get('itineraries', []):
                             for segment in itinerary.get('segments', []):
                                 if 'id' in segment:
@@ -1206,15 +1210,17 @@ class FlightSearchViewSet(viewsets.ViewSet):
                 currency=currency
             )
 
-            # After getting flight_offers but before returning Response
+            # Post-process flight offers
             if 'data' in flight_offers:
+                # Enrich with airline names
+                flight_offers['data'] = self.amadeus_api._enrich_flight_data_with_airline_names(flight_offers['data'])
+
+                # Cache the offers
                 for offer in flight_offers['data']:
                     if 'id' in offer:
-                        # Cache by offer ID
                         cache_key = f"flight_offer_{offer['id']}"
                         cache.set(cache_key, offer, timeout=3600)
 
-                        # Also cache by segment IDs for easier lookup later
                         for itinerary in offer.get('itineraries', []):
                             for segment in itinerary.get('segments', []):
                                 if 'id' in segment:

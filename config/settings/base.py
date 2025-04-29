@@ -101,7 +101,7 @@ LOCAL_APPS = [
     "core.applications.cars",
     "core.applications.bookings",
     "core.applications.faq",
-    "core.applications.tickets",
+    "core.applications.tickets",  # Updated to use correct path
     "core.applications.chat",
     "core.applications.policy",
     # Your stuff: custom apps go here
