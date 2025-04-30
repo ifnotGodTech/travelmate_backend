@@ -1339,9 +1339,12 @@ class FlightSearchViewSet(viewsets.ViewSet):
 
                 # Sort results based on priority and then alphabetically
                 formatted_results.sort(key=lambda x: (
-                    x['priority'],  # Sort by priority first (1 before 2)
-                    0 if x['iataCode'].startswith(keyword) else 1,  # IATA codes starting with keyword come first
-                    x['name']  # Then alphabetically by name
+                    x['priority'],
+                    0 if any(
+                        str(x.get(field, '') or '').upper().startswith(keyword.upper())
+                        for field in ['name', 'cityName', 'iataCode', 'id']
+                    ) else 1,
+                    x['name']
                 ))
 
             return Response(formatted_results[:10], status=status.HTTP_200_OK)
@@ -1353,21 +1356,42 @@ class FlightSearchViewSet(viewsets.ViewSet):
 
     def _get_country_name(self, country_code):
         """
-        Convert country code to country name
-        You can implement this using a dictionary or another API call
+        Convert country code to country name using a dictionary mapping
+
+        Args:
+            country_code (str): Two-letter ISO country code
+
+        Returns:
+            str: Country name or Unknown if not found
         """
         if not country_code:
             return None
 
-        # This is a simple example - you should replace with a complete mapping
         country_map = {
             'NG': 'Nigeria',
             'US': 'United States',
             'GB': 'United Kingdom',
             'FR': 'France',
             'DE': 'Germany',
-            # Add more as needed
+            'ES': 'Spain',
+            'IT': 'Italy',
+            'PT': 'Portugal',
+            'NL': 'Netherlands',
+            'BE': 'Belgium',
+            'CH': 'Switzerland',
+            'IE': 'Ireland',
+            'CA': 'Canada',
+            'AU': 'Australia',
+            'NZ': 'New Zealand',
+            'ZA': 'South Africa',
+            'IN': 'India',
+            'CN': 'China',
+            'JP': 'Japan',
+            'BR': 'Brazil',
+            'MX': 'Mexico'
         }
+
+        return country_map.get(country_code.upper()) if country_code else 'Unknown'
 
     @action(detail=False, methods=['get'])
     def flight_details(self, request):
