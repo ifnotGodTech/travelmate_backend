@@ -122,6 +122,7 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         flight_offer_ids = serializer.validated_data['flight_offer_ids']
+        upsell_offer_id = serializer.validated_data.get('upsell_offer_id')
         passengers_data = serializer.validated_data['passengers']
         booking_type = serializer.validated_data['booking_type']
 
@@ -130,14 +131,24 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
         for offer_id in flight_offer_ids:
             cache_key = f"flight_offer_{offer_id}"
             cached_offer = cache.get(cache_key)
-
             if not cached_offer:
                 return Response(
                     {"error": f"Flight offer {offer_id} not found. Please perform a new search."},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-
             flight_offers.append(cached_offer)
+
+        # If an upsell offer ID is provided, retrieve and use it instead
+        if upsell_offer_id:
+            cache_key = f"upsell_offer_{upsell_offer_id}"
+            upsell_offer = cache.get(cache_key)
+            if not upsell_offer:
+                return Response(
+                    {"error": f"Upsell offer {upsell_offer_id} not found. Please fetch upsell options again."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            # Replace the first flight offer with the upsell offer
+            flight_offers[0] = upsell_offer
 
         # Calculate pricing with service fee
         stripe_processor = StripePaymentProcessor()
@@ -1234,6 +1245,42 @@ class FlightSearchViewSet(viewsets.ViewSet):
                 {"error": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+    @action(detail=False, methods=['post'])
+    def upsell_flight_offer(self, request):
+        """
+        Get upsell options for a selected flight offer
+        """
+        try:
+            flight_offer_id = request.data.get('flight_offer_id')
+            if not flight_offer_id:
+                return Response(
+                    {"error": "Flight offer ID is required"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            cache_key = f"flight_offer_{flight_offer_id}"
+            flight_offer = cache.get(cache_key)
+            if not flight_offer:
+                return Response(
+                    {"error": f"Flight offer {flight_offer_id} not found. Please perform a new search."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            upsell_offers = self.amadeus_api.upsell_flight_offer(flight_offer)
+            if 'data' in upsell_offers:
+                upsell_offers['data'] = self.amadeus_api._enrich_flight_data_with_airline_names(upsell_offers['data'])
+                for offer in upsell_offers['data']:
+                    if 'id' in offer:
+                        cache_key = f"upsell_offer_{offer['id']}"
+                        cache.set(cache_key, offer, timeout=3600)
+                        for itinerary in offer.get('itineraries', []):
+                            for segment in itinerary.get('segments', []):
+                                if 'id' in segment:
+                                    segment_cache_key = f"upsell_offer_by_segment_{segment['id']}"
+                                    cache.set(segment_cache_key, offer, timeout=3600)
+            return Response(upsell_offers, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=False, methods=['post'])
     def price_flight_offers(self, request):

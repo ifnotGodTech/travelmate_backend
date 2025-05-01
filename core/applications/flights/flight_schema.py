@@ -70,6 +70,13 @@ class BookingCreationResponseSerializer(serializers.Serializer):
     currency = serializers.CharField(help_text="Currency code")
     # Include additional fields as needed to match your FlightBookingSerializer
 
+# Serializer for upsell flight offer request
+class UpsellFlightOfferRequestSerializer(serializers.Serializer):
+    """Serializer for upsell flight offer request"""
+    flight_offer_id = serializers.CharField(
+        help_text="ID of the flight offer to fetch upsell options for, obtained from a previous flight search"
+    )
+
 # Define schema extensions for FlightBookingViewSet
 flight_booking_schema = extend_schema_view(
     list=extend_schema(
@@ -93,8 +100,9 @@ flight_booking_schema = extend_schema_view(
     create_booking=extend_schema(
         summary="Create new flight booking",
         description="""
-        Create a new flight booking with passenger details and flight offer IDs.
+        Create a new flight booking with passenger details, flight offer IDs, and an optional upsell offer ID.
         The flight offers must have been previously retrieved and cached from a flight search.
+        If an upsell_offer_id is provided, the booking will use the upsell offer instead of the original flight offer.
         """,
         request=FlightBookingInputSerializer,
         responses={
@@ -108,7 +116,34 @@ flight_booking_schema = extend_schema_view(
         },
         examples=[
             OpenApiExample(
-                "Booking Example",
+                "Booking Example with Upsell",
+                value={
+                    "flight_offer_ids": ["1"],
+                    "upsell_offer_id": "upsell456",
+                    "passengers": [
+                        {
+                            "title": "MR",
+                            "first_name": "John",
+                            "last_name": "Doe",
+                            "email": "john.doe@example.com",
+                            "date_of_birth": "1980-01-01",
+                            "gender": "M",
+                            "passport_number": "US123456",
+                            "passport_expiry": "2030-01-01",
+                            "nationality": "US",
+                            "phone": "+12345678900",
+                            "address_line1": "123 Main St",
+                            "city": "New York",
+                            "country": "US",
+                            "postal_code": "10001"
+                        }
+                    ],
+                    "booking_type": "ONE_WAY"
+                },
+                request_only=True
+            ),
+            OpenApiExample(
+                "Booking Example without Upsell",
                 value={
                     "flight_offer_ids": ["1", "2"],
                     "passengers": [
@@ -355,6 +390,32 @@ flight_search_schema = extend_schema_view(
                 description="ID of the flight offer which has been previously retrieved from search",
             )
         ]
+    ),
+    upsell_flight_offer=extend_schema(
+        summary="Get upsell flight offers",
+        description="""
+        Retrieve upsell options (e.g., upgraded cabin classes or branded fares) for a specific flight offer.
+        The flight offer must have been previously retrieved and cached from a flight search.
+        """,
+        request=UpsellFlightOfferRequestSerializer,
+        responses={
+            200: OpenApiResponse(
+                response=FlightOffersSearchResponseSerializer,
+                description="Upsell flight offer results"
+            ),
+            400: OpenApiResponse(
+                description="Invalid flight offer ID or flight offer not found"
+            )
+        },
+        examples=[
+            OpenApiExample(
+                "Upsell Flight Offer Example",
+                value={
+                    "flight_offer_id": "offer123"
+                },
+                request_only=True
+            )
+        ]
     )
 )
 
@@ -370,46 +431,46 @@ class FlightServiceMetaSerializer(serializers.Serializer):
 # Custom schema operation tags
 FLIGHT_TAGS = ["Flight Booking", "Flight Search", "Payment Processing"]
 
-# Schema customization function
-def get_spectacular_settings():
-    return {
-        'TITLE': 'Flight Booking API',
-        'DESCRIPTION': 'API for searching, booking, and managing flight reservations',
-        'VERSION': '1.0.0',
-        'SERVE_INCLUDE_SCHEMA': False,
+# # Schema customization function
+# def get_spectacular_settings():
+#     return {
+#         'TITLE': 'Flight Booking API',
+#         'DESCRIPTION': 'API for searching, booking, and managing flight reservations',
+#         'VERSION': '1.0.0',
+#         'SERVE_INCLUDE_SCHEMA': False,
 
-        # Customizations
-        'SCHEMA_PATH_PREFIX': r'/api/v[0-9]',
-        'COMPONENT_SPLIT_REQUEST': True,
-        'TAGS': [
-            {'name': 'Flight Booking', 'description': 'Operations related to flight bookings'},
-            {'name': 'Flight Search', 'description': 'Operations related to searching for flights'},
-            {'name': 'Payment Processing', 'description': 'Operations related to payment processing'},
-        ],
+#         # Customizations
+#         'SCHEMA_PATH_PREFIX': r'/api/v[0-9]',
+#         'COMPONENT_SPLIT_REQUEST': True,
+#         'TAGS': [
+#             {'name': 'Flight Booking', 'description': 'Operations related to flight bookings'},
+#             {'name': 'Flight Search', 'description': 'Operations related to searching for flights'},
+#             {'name': 'Payment Processing', 'description': 'Operations related to payment processing'},
+#         ],
 
-        # Add authentication schemes
-        'SECURITY': [
-            {'Bearer': []},
-        ],
-        'SWAGGER_UI_SETTINGS': {
-            'deepLinking': True,
-            'persistAuthorization': True,
-            'displayOperationId': True,
-        },
+#         # Add authentication schemes
+#         'SECURITY': [
+#             {'Bearer': []},
+#         ],
+#         'SWAGGER_UI_SETTINGS': {
+#             'deepLinking': True,
+#             'persistAuthorization': True,
+#             'displayOperationId': True,
+#         },
 
-        # Customize operations
-        'DEFAULT_GENERATOR_CLASS': 'drf_spectacular.generators.SchemaGenerator',
-        'COMPONENT_NO_READ_ONLY_REQUIRED': True,
-        'ENUM_NAME_OVERRIDES': {
-            'BookingTypeEnum': ['ONE_WAY', 'ROUND_TRIP', 'MULTI_CITY'],
-            'TravelClassEnum': ['ECONOMY', 'PREMIUM_ECONOMY', 'BUSINESS', 'FIRST'],
-            'PaymentStatusEnum': ['PENDING', 'COMPLETED', 'FAILED', 'REFUNDED', 'PARTIALLY_REFUNDED'],
-            'BookingStatusEnum': ['PENDING', 'COMPLETED', 'CANCELLED', 'PAYMENT_FAILED'],
-        },
+#         # Customize operations
+#         'DEFAULT_GENERATOR_CLASS': 'drf_spectacular.generators.SchemaGenerator',
+#         'COMPONENT_NO_READ_ONLY_REQUIRED': True,
+#         'ENUM_NAME_OVERRIDES': {
+#             'BookingTypeEnum': ['ONE_WAY', 'ROUND_TRIP', 'MULTI_CITY'],
+#             'TravelClassEnum': ['ECONOMY', 'PREMIUM_ECONOMY', 'BUSINESS', 'FIRST'],
+#             'PaymentStatusEnum': ['PENDING', 'COMPLETED', 'FAILED', 'REFUNDED', 'PARTIALLY_REFUNDED'],
+#             'BookingStatusEnum': ['PENDING', 'COMPLETED', 'CANCELLED', 'PAYMENT_FAILED'],
+#         },
 
-        # Add operation filtering
-        'POSTPROCESSING_HOOKS': [
-            'drf_spectacular.hooks.postprocess_schema_enums',
-            'drf_spectacular.hooks.postprocess_prioritize_required',
-        ],
-    }
+#         # Add operation filtering
+#         'POSTPROCESSING_HOOKS': [
+#             'drf_spectacular.hooks.postprocess_schema_enums',
+#             'drf_spectacular.hooks.postprocess_prioritize_required',
+#         ],
+#     }
