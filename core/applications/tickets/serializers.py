@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Ticket, Message, EscalationLevel
+from .models import Ticket, Message, EscalationLevel, TicketNotification
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema_field
@@ -153,3 +153,12 @@ class EscalationLevelStatsSerializer(serializers.Serializer):
     total = serializers.IntegerField()
     pending = serializers.IntegerField()
     resolved = serializers.IntegerField()
+
+
+class TicketNotificationSerializer(serializers.ModelSerializer):
+    ticket = TicketSerializer(read_only=True)
+
+    class Meta:
+        model = TicketNotification
+        fields = ('id', 'user', 'ticket', 'notification_type', 'message', 'created_at', 'is_read')
+        read_only_fields = ('id', 'user', 'ticket', 'notification_type', 'message', 'created_at')

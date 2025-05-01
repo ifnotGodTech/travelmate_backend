@@ -1,6 +1,8 @@
 from django.db import models
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+from django.db.models.signals import post_save
+from django.dispatch import receiver
 
 
 User = get_user_model()
@@ -83,3 +85,76 @@ class Message(models.Model):
 
     def __str__(self):
         return f"Message in Ticket #{self.ticket.id} by {self.sender.username}"
+
+
+class TicketNotification(models.Model):
+    NOTIFICATION_TYPES = [
+        ('new_message', 'New Message'),
+        ('ticket_resolved', 'Ticket Resolved'),
+        ('ticket_escalated', 'Ticket Escalated'),
+    ]
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='ticket_notifications')
+    ticket = models.ForeignKey(Ticket, on_delete=models.CASCADE, related_name='notifications')
+    notification_type = models.CharField(max_length=20, choices=NOTIFICATION_TYPES)
+    message = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    is_read = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Notification for {self.user.email}: {self.notification_type}"
+
+
+@receiver(post_save, sender=Message)
+def create_message_notification(sender, instance, created, **kwargs):
+    if created:
+        # Create notification for ticket owner if message is from staff
+        if instance.sender.is_staff and instance.ticket.user != instance.sender:
+            TicketNotification.objects.create(
+                user=instance.ticket.user,
+                ticket=instance.ticket,
+                notification_type='new_message',
+                message=f'New message from support on ticket: {instance.ticket.title}'
+            )
+        # Create notification for staff if message is from user
+        elif not instance.sender.is_staff:
+            for admin in User.objects.filter(is_staff=True):
+                TicketNotification.objects.create(
+                    user=admin,
+                    ticket=instance.ticket,
+                    notification_type='new_message',
+                    message=f'New message from {instance.sender.email} on ticket: {instance.ticket.title}'
+                )
+
+@receiver(post_save, sender=Ticket)
+def create_ticket_status_notification(sender, instance, **kwargs):
+    if kwargs.get('update_fields'):
+        # Ticket resolved notification
+        if 'status' in kwargs['update_fields'] and instance.status == 'resolved':
+            TicketNotification.objects.create(
+                user=instance.user,
+                ticket=instance,
+                notification_type='ticket_resolved',
+                message=f'Your ticket "{instance.title}" has been resolved'
+            )
+
+        # Ticket escalated notification
+        if 'escalated' in kwargs['update_fields'] and instance.escalated:
+            # Notify user
+            TicketNotification.objects.create(
+                user=instance.user,
+                ticket=instance,
+                notification_type='ticket_escalated',
+                message=f'Your ticket "{instance.title}" has been escalated to {instance.escalation_level.name}'
+            )
+            # Notify staff
+            for admin in User.objects.filter(is_staff=True):
+                TicketNotification.objects.create(
+                    user=admin,
+                    ticket=instance,
+                    notification_type='ticket_escalated',
+                    message=f'Ticket "{instance.title}" has been escalated to {instance.escalation_level.name}'
+                )
