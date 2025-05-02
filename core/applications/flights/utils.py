@@ -250,6 +250,34 @@ class AmadeusAPI:
         else:
             raise Exception(f"Failed to price flight offers: {response.text}")
 
+
+    def upsell_flight_offer(self, flight_offer: Dict) -> Dict:
+        """
+        Get upsell options for a flight offer using Amadeus Branded Fares Upsell API
+
+        Args:
+            flight_offer: The selected flight offer from the search API
+
+        Returns:
+            Dict containing upsell flight offers
+        """
+        url = f"{self.base_url}/v1/shopping/flight-offers/upselling"
+
+        payload = {
+            'data': {
+                'type': 'flight-offers-upselling',
+                'flightOffers': [flight_offer]
+            }
+        }
+
+        response = requests.post(url, headers=self._get_headers(), json=payload)
+
+        if response.status_code == 200:
+            return response.json()
+        else:
+            raise Exception(f"Failed to get upsell flight offers: {response.text}")
+
+
     def create_flight_order(self, flight_offer: Dict, travelers: List[Dict]) -> Dict:
         """
         Create a flight order using Amadeus Flight Orders API

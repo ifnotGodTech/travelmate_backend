@@ -2,6 +2,8 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
+    AdminNotificationViewSet,
+    NotificationViewSet,
     TicketViewSet,
     AdminTicketViewSet,
     TicketMessageListCreateView,
@@ -15,12 +17,16 @@ app_name = 'tickets'
 user_router = DefaultRouter()
 user_router.register(r'tickets', TicketViewSet, basename='ticket')
 user_router.register(r'messages', MessageViewSet, basename='message')
+user_router.register(r'notifications', NotificationViewSet, basename='notification')  # Add this line
+
 
 # Router for admin-only endpoints
 admin_router = DefaultRouter()
 admin_router.register(r'tickets', AdminTicketViewSet, basename='admin-ticket')
 admin_router.register(r'messages', MessageViewSet, basename='admin-message')
 admin_router.register(r'escalation-levels', EscalationLevelViewSet, basename='escalation-level')
+admin_router.register(r'notifications', AdminNotificationViewSet, basename='admin-notification')  # Add this line
+
 
 urlpatterns = [
     # Regular user routes

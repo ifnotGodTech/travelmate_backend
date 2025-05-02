@@ -4,7 +4,7 @@ from drf_spectacular.types import OpenApiTypes
 from .serializers import (
     TicketSerializer, MessageSerializer, TicketCreateSerializer,
     TicketEscalateSerializer, MessageCreateSerializer,
-    EscalationLevelSerializer
+    EscalationLevelSerializer, TicketNotificationSerializer
 )
 
 # Ticket ViewSet schema definitions
@@ -1150,4 +1150,165 @@ message_list_all_schema = extend_schema(
         401: OpenApiResponse(description="Authentication credentials were not provided.")
     },
     tags=["Ticket Messages"]
+)
+
+
+# Notification ViewSet schema definitions
+notification_list_schema = extend_schema(
+    summary="List all notifications",
+    description="Returns a list of all notifications for the authenticated user.",
+    responses={
+        200: TicketNotificationSerializer(many=True),
+        401: OpenApiResponse(description="Authentication credentials were not provided.")
+    },
+    examples=[
+        OpenApiExample(
+            name="Notifications List Response",
+            value=[
+                {
+                    "id": 1,
+                    "user": {
+                        "id": 1,
+                        "email": "user@example.com",
+                        "first_name": "John",
+                        "last_name": "Doe"
+                    },
+                    "ticket": {
+                        "id": 1,
+                        "title": "Payment Issue",
+                        "status": "pending"
+                    },
+                    "notification_type": "new_message",
+                    "message": "New message from support on ticket: Payment Issue",
+                    "created_at": "2025-04-05T10:30:00Z",
+                    "is_read": False
+                }
+            ],
+            response_only=True
+        )
+    ],
+    tags=["Ticket Notifications"]
+)
+
+notification_retrieve_schema = extend_schema(
+    summary="Retrieve a specific notification",
+    description="Returns details of a specific notification.",
+    parameters=[
+        OpenApiParameter(
+            name="id",
+            type=OpenApiTypes.INT,
+            location=OpenApiParameter.PATH,
+            description="A unique integer value identifying the notification."
+        )
+    ],
+    responses={
+        200: TicketNotificationSerializer,
+        401: OpenApiResponse(description="Authentication credentials were not provided."),
+        403: OpenApiResponse(description="You do not have permission to access this notification."),
+        404: OpenApiResponse(description="Notification not found.")
+    },
+    tags=["Ticket Notifications"]
+)
+
+notification_mark_read_schema = extend_schema(
+    summary="Mark notification as read",
+    description="Marks a specific notification as read.",
+    parameters=[
+        OpenApiParameter(
+            name="id",
+            type=OpenApiTypes.INT,
+            location=OpenApiParameter.PATH,
+            description="A unique integer value identifying the notification."
+        )
+    ],
+    responses={
+        200: OpenApiResponse(
+            description="Notification marked as read",
+            examples=[
+                OpenApiExample(
+                    name="Success Response",
+                    value={"status": "notification marked as read"}
+                )
+            ]
+        ),
+        401: OpenApiResponse(description="Authentication credentials were not provided."),
+        403: OpenApiResponse(description="You do not have permission to modify this notification."),
+        404: OpenApiResponse(description="Notification not found.")
+    },
+    tags=["Ticket Notifications"]
+)
+
+notification_mark_all_read_schema = extend_schema(
+    summary="Mark all notifications as read",
+    description="Marks all notifications for the authenticated user as read.",
+    responses={
+        200: OpenApiResponse(
+            description="All notifications marked as read",
+            examples=[
+                OpenApiExample(
+                    name="Success Response",
+                    value={"status": "all notifications marked as read"}
+                )
+            ]
+        ),
+        401: OpenApiResponse(description="Authentication credentials were not provided.")
+    },
+    tags=["Ticket Notifications"]
+)
+
+notification_count_schema = extend_schema(
+    summary="Get unread notification count",
+    description="Returns the count of unread notifications for the authenticated user.",
+    responses={
+        200: OpenApiResponse(
+            description="Unread notification count",
+            examples=[
+                OpenApiExample(
+                    name="Count Response",
+                    value={"unread_count": 5}
+                )
+            ]
+        ),
+        401: OpenApiResponse(description="Authentication credentials were not provided.")
+    },
+    tags=["Ticket Notifications"]
+)
+
+# Admin notification schemas
+admin_notification_list_schema = extend_schema(
+    summary="Admin: List all notifications",
+    description="Returns a list of all notifications in the system. Admin access only.",
+    responses={
+        200: TicketNotificationSerializer(many=True),
+        401: OpenApiResponse(description="Authentication credentials were not provided."),
+        403: OpenApiResponse(description="You do not have permission to access this view.")
+    },
+    tags=["Admin Ticket Notifications"]
+)
+
+admin_notification_stats_schema = extend_schema(
+    summary="Admin: Get notification statistics",
+    description="Returns statistics about notifications in the system.",
+    responses={
+        200: OpenApiResponse(
+            description="Notification statistics",
+            examples=[
+                OpenApiExample(
+                    name="Stats Response",
+                    value={
+                        "total_notifications": 100,
+                        "unread_notifications": 25,
+                        "notification_types": {
+                            "new_message": 50,
+                            "ticket_resolved": 30,
+                            "ticket_escalated": 20
+                        }
+                    }
+                )
+            ]
+        ),
+        401: OpenApiResponse(description="Authentication credentials were not provided."),
+        403: OpenApiResponse(description="You do not have permission to access this view.")
+    },
+    tags=["Admin Ticket Notifications"]
 )

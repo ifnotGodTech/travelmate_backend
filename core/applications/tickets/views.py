@@ -7,9 +7,9 @@ from django.db import models
 from django.conf import settings
 from datetime import timedelta
 from django.utils import timezone
-from .models import Ticket, Message, EscalationLevel
+from .models import Ticket, Message, EscalationLevel, TicketNotification
 from .serializers import (
-    TicketSerializer, MessageSerializer, TicketCreateSerializer,
+    TicketNotificationSerializer, TicketSerializer, MessageSerializer, TicketCreateSerializer,
     TicketEscalateSerializer, MessageCreateSerializer,
     EscalationLevelSerializer, TicketEscalatedStatsSerializer,
     TicketResolutionStatsSerializer,
@@ -33,7 +33,10 @@ from .schema import (
     escalation_level_destroy_schema, admin_ticket_escalated_stats_schema,
     admin_ticket_resolution_stats_schema, admin_ticket_all_stats_schema,
     admin_ticket_category_stats_schema, admin_ticket_pending_schema,
-    admin_ticket_escalation_level_stats_schema, admin_ticket_average_response_time_schema,
+    admin_ticket_escalation_level_stats_schema, admin_ticket_average_response_time_schema,notification_count_schema,notification_mark_all_read_schema,
+    notification_mark_read_schema, notification_list_schema,
+    notification_retrieve_schema, admin_notification_list_schema,
+    admin_notification_stats_schema
 )
 
 class IsAdminOrOwner(permissions.BasePermission):
@@ -79,7 +82,7 @@ class EscalationLevelViewSet(viewsets.ModelViewSet):
 class AdminTicketViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAdminUser]
     serializer_class = TicketSerializer
-    queryset = Ticket.objects.all()
+    queryset = Ticket.objects.all().order_by('-created_at')
 
     @action(detail=False, methods=['get'])
     def all_stats(self, request):
@@ -111,7 +114,7 @@ class AdminTicketViewSet(viewsets.ModelViewSet):
         response_data = {}
 
         # 1. Escalated Stats
-        escalated_queryset = self.queryset.filter(escalated=True, status='pending')
+        escalated_queryset = self.queryset.filter(escalated=True, status='pending').order_by('-created_at')
         if delta:
             since = now - delta
             escalated_queryset = escalated_queryset.filter(created_at__gte=since)
@@ -123,7 +126,7 @@ class AdminTicketViewSet(viewsets.ModelViewSet):
         }
 
         # 2. Resolution Stats
-        resolved_queryset = self.queryset.filter(status='resolved')
+        resolved_queryset = self.queryset.filter(status='resolved').order_by('-created_at')
         if delta:
             since = now - delta
             resolved_queryset = resolved_queryset.filter(updated_at__gte=since)
@@ -156,7 +159,7 @@ class AdminTicketViewSet(viewsets.ModelViewSet):
         response_data['escalation_levels'] = escalation_stats
 
         # 5. Pending Tickets
-        pending_queryset = self.queryset.filter(status='pending')
+        pending_queryset = self.queryset.filter(status='pending').order_by('-created_at')
         if delta:
             since = now - delta
             pending_queryset = pending_queryset.filter(created_at__gte=since)
@@ -224,6 +227,7 @@ class AdminTicketViewSet(viewsets.ModelViewSet):
         if serializer.is_valid():
             # Save the updated ticket with escalation info
             ticket = serializer.save(escalated=True)
+            ticket.save(update_fields=['escalated'])
 
             # Verify escalation level was set
             if not ticket.escalation_level:
@@ -308,7 +312,7 @@ class AdminTicketViewSet(viewsets.ModelViewSet):
             )
 
         ticket.status = 'resolved'
-        ticket.save()
+        ticket.save(update_fields=['status'])
 
         return Response(
             {"detail": "Ticket resolved successfully."},
@@ -331,8 +335,8 @@ class TicketViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         if user.is_staff:
-            return Ticket.objects.all()
-        return Ticket.objects.filter(user=user)
+            return Ticket.objects.all().order_by('-created_at')
+        return Ticket.objects.filter(user=user).order_by('-created_at')
 
     def get_serializer_class(self):
         if self.action == 'create':
@@ -356,6 +360,14 @@ class TicketViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
 
+    @action(detail=False, methods=['get'])
+    def unread_notifications_count(self, request):
+        count = TicketNotification.objects.filter(
+            user=request.user,
+            is_read=False
+        ).count()
+        return Response({'unread_count': count})
+
 @extend_schema_view(
     get=message_list_schema,
     post=message_create_schema
@@ -372,7 +384,7 @@ class TicketMessageListCreateView(generics.ListCreateAPIView):
         if not (self.request.user.is_staff or ticket.user == self.request.user):
             return Message.objects.none()
 
-        return Message.objects.filter(ticket_id=ticket_id)
+        return Message.objects.filter(ticket_id=ticket_id).order_by('-timestamp')
 
     def get_serializer_class(self):
         if self.request.method == 'POST':
@@ -410,9 +422,89 @@ class MessageViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return Message.objects.all()
+        return Message.objects.all().order_by('-timestamp')
 
     def get_object(self):
         obj = super().get_object()
         self.check_object_permissions(self.request, obj)
         return obj
+
+
+
+@extend_schema_view(
+    list=notification_list_schema,
+    retrieve=notification_retrieve_schema,
+    mark_as_read=notification_mark_read_schema,
+    mark_all_as_read=notification_mark_all_read_schema,
+    unread_notifications_count=notification_count_schema
+)
+class NotificationViewSet(viewsets.ModelViewSet):
+    """ViewSet for handling user notifications"""
+    serializer_class = TicketNotificationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    http_method_names = ['get']  # Only allow GET and POST methods
+
+    def get_queryset(self):
+        return TicketNotification.objects.filter(user=self.request.user).order_by('-created_at')
+
+    def create(self, request, *args, **kwargs):
+        # Prevent direct creation of notifications through the API
+        return Response(
+            {"detail": "Notifications cannot be created directly."},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED
+        )
+
+    @action(detail=True, methods=['post'])
+    def mark_as_read(self, request, pk=None):
+        notification = self.get_object()
+        notification.is_read = True
+        notification.save(update_fields=['is_read'])  # Only update is_read field
+        return Response({'status': 'notification marked as read'})
+
+    @action(detail=False, methods=['post'])
+    def mark_all_as_read(self, request):
+        self.get_queryset().update(is_read=True)
+        return Response({'status': 'all notifications marked as read'})
+
+
+@extend_schema_view(
+    list=admin_notification_list_schema,
+    notification_stats=admin_notification_stats_schema
+)
+class AdminNotificationViewSet(viewsets.ModelViewSet):
+    """ViewSet for admin-only notification management"""
+    serializer_class = TicketNotificationSerializer
+    permission_classes = [permissions.IsAdminUser]
+    queryset = TicketNotification.objects.all()
+    http_method_names = ['get', 'delete']  # Only allow GET and DELETE methods
+
+    @action(detail=False, methods=['get'])
+    def notification_stats(self, request):
+        """Get statistics about notifications in the system"""
+        total = self.queryset.count()
+        unread = self.queryset.filter(is_read=False).count()
+
+        # Count by notification type
+        type_counts = (self.queryset
+                      .values('notification_type')
+                      .annotate(count=models.Count('id')))
+
+        notification_types = {
+            item['notification_type']: item['count']
+            for item in type_counts
+        }
+
+        return Response({
+            'total_notifications': total,
+            'unread_notifications': unread,
+            'notification_types': notification_types
+        })
+
+    @action(detail=False, methods=['delete'])
+    def clear_read_notifications(self, request):
+        """Delete all read notifications"""
+        deleted_count = self.queryset.filter(is_read=True).delete()[0]
+        return Response({
+            'status': 'success',
+            'deleted_count': deleted_count
+        })
