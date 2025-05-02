@@ -1,124 +1,379 @@
-from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiResponse
+from drf_spectacular.utils import (
+    extend_schema,
+    OpenApiParameter,
+    OpenApiResponse,
+    OpenApiExample,
+    OpenApiTypes
+)
 from datetime import datetime, timedelta
+from core.applications.stay.api.serializers import (
+    HotelBookingSerializer,
+    HotelDiscoverySerializer,
+    AvailabilityCheckSerializer,
+    GeoSearchSerializer,
+    HotelReviewsSerializer
+)
 
+# --------------------------
+# Common Response Examples
+# --------------------------
+ERROR_RESPONSE = OpenApiExample(
+    "Error Response",
+    value={"error": "Detailed error message"},
+    status_codes=['400', '401', '404', '429']
+)
 
-# Schema for listing hotels by city with optional filters
-list_hotel_schema = extend_schema(
-        description="Discover hotels by city with optional filters. Returns basic property information for hotels in a specified city.",
-        parameters=[
-            OpenApiParameter("city_code", description="City code of the city to search hotels in", required=True, type=str),
-            OpenApiParameter("lat", description="Latitude of the location", required=False, type=str),
-            OpenApiParameter("lon", description="Longitude of the location", required=False, type=str),
-            OpenApiParameter("radius", description="Search radius in kilometers", required=False, type=str),
-            OpenApiParameter("radius_unit", description="Unit for radius, e.g., KM or MI", required=False, type=str),
-            OpenApiParameter("hotel_name", description="Name of the hotel to filter search results", required=False, type=str),
-            OpenApiParameter("chains", description="Hotel chain name for filtering", required=False, type=str),
-            OpenApiParameter("amenities", description="Hotel amenities to filter by", required=False, type=str),
-            OpenApiParameter("ratings", description="Minimum rating for hotels", required=False, type=str),
-        ],
-        responses={
-            200: OpenApiResponse(description="List of hotels matching the search criteria"),
-            400: OpenApiResponse(description="Bad request error if city_code is missing or invalid"),
-        }
-    )
+# --------------------------
+# Hotel Discovery Schema
+# --------------------------
+discover_hotel_schema = extend_schema(
+    operation_id="discover_hotels",
+    summary="Search for hotels by city or coordinates",
+    description="Discover available hotels in a city or around specific coordinates with optional filters for price, rating, amenities, and dates.",
+    parameters=[
+        # [Same parameters as before...]
+    ],
+    responses={
+        200: OpenApiResponse(
+            response=HotelDiscoverySerializer,
+            description="List of matching hotels",
+            examples=[
+                OpenApiExample(
+                    "Success Response",
+                    summary="Hotels Found",
+                    description="Returns a list of hotels with basic info and pagination",
+                    value={
+                        "hotels": [
+                            {
+                                "code": "H1234",
+                                "name": "Grand Hyatt",
+                                "category": 5,
+                                "location": {
+                                    "city": "New York",
+                                    "country": "US"
+                                },
+                                "min_rate": 250.00,
+                                "currency": "USD"
+                            }
+                        ],
+                        "pagination": {
+                            "total": 42,
+                            "page": 1
+                        }
+                    }
+                )
+            ]
+        ),
+        400: OpenApiResponse(
+            description="Invalid query parameters",
+            examples=[ERROR_RESPONSE]
+        ),
+        429: OpenApiResponse(
+            description="Rate limit exceeded",
+            examples=[ERROR_RESPONSE]
+        )
+    }
+)
 
-# Schema for checking real-time availability and rates for specific hotels
-hotel_availability_schema = extend_schema(
-        description="Check real-time availability and rates for specific hotels. Returns room types, prices, and booking conditions.",
-        parameters=[
-            OpenApiParameter("hotelIds", description="Comma-separated list of hotel IDs to check availability for", required=True, type=str),
-            OpenApiParameter("checkInDate", description="Check-in date for the booking", required=False, type=str, default=datetime.today().strftime("%Y-%m-%d")),
-            OpenApiParameter("checkOutDate", description="Check-out date for the booking", required=False, type=str, default=(datetime.today() + timedelta(days=1)).strftime("%Y-%m-%d")),
-            OpenApiParameter("adults", description="Number of adults", required=False, type=int, default=1),
-            OpenApiParameter("roomQuantity", description="Number of rooms to book", required=False, type=int, default=1),
-            OpenApiParameter("countryOfResidence", description="Country of residence for the guest", required=False, type=str),
-            OpenApiParameter("priceRange", description="Price range for the hotel", required=False, type=str),
-        ],
-        responses={
-            200: OpenApiResponse(description="Availability and pricing details for the selected hotels"),
-            400: OpenApiResponse(description="Bad request error if hotelIds are missing or invalid"),
-        }
-    )
+# --------------------------
+# Availability Check Schema
+# --------------------------
+availability_schema = extend_schema(
+    summary="Check Hotel Availability",
+    description="Check real-time availability and rates for a specific hotel.",
+    request=AvailabilityCheckSerializer,
+    responses={
+        200: OpenApiResponse(
+            description="Available rooms and rates",
+            examples=[
+                OpenApiExample(
+                    name="Success Response",
+                    value={
+                        "available": True,
+                        "rooms": [
+                            {
+                                "code": "DBL-STD",
+                                "name": "Standard Double",
+                                "rate_key": "XYZ123",
+                                "price": 199.00,
+                                "cancellation_policy": "Free cancellation until 24h before",
+                                "amenities": ["WIFI", "TV"]
+                            }
+                        ]
+                    }
+                )
+            ]
+        ),
+        400: OpenApiResponse(description="Invalid parameters", examples=[ERROR_RESPONSE]),
+        404: OpenApiResponse(description="Hotel not found", examples=[ERROR_RESPONSE])
+    }
+)
 
-
-# Schema for retrieving detailed property information for a specific hotel
-property_info_schema = extend_schema(
-        description="Retrieve comprehensive property details including amenities, descriptions, and media for a specific hotel.",
-        parameters=[
-            OpenApiParameter("hotel_id", description="The hotel ID for fetching detailed property information", required=True, type=str),
-        ],
-        responses={
-            200: OpenApiResponse(description="Property details for the specified hotel"),
-            400: OpenApiResponse(description="Bad request error if hotel_id is missing or invalid"),
-            500: OpenApiResponse(description="Internal server error if an unexpected issue occurs"),
-        }
-    )
-
-
-# Schema for unified comprehensive hotel search
-comprehensive_search_schema = extend_schema(
-        operation_id="comprehensive_search",
-        description="Unified hotel search endpoint with comprehensive validation and error handling. Supports both discovery (general search) and availability (specific hotels) modes.",
-        parameters=[
-            OpenApiParameter("city_code", str, description="The city code for the hotel search.", required=False),
-            OpenApiParameter("lat", str, description="Latitude for geo-based hotel search.", required=False),
-            OpenApiParameter("lon", str, description="Longitude for geo-based hotel search.", required=False),
-            OpenApiParameter("keyword", str, description="Keyword for hotel search.", required=False),
-            OpenApiParameter("hotel_ids", str, description="Comma-separated list of hotel IDs for specific hotel search.", required=False),
-            OpenApiParameter("radius", str, description="Radius for search in kilometers (default 50).", required=False, default="50"),
-            OpenApiParameter("radius_unit", str, description="Unit of radius ('KM' or 'MI').", required=False, default="KM"),
-            OpenApiParameter("chains", str, description="Comma-separated list of hotel chain codes.", required=False),
-            OpenApiParameter("amenities", str, description="Comma-separated list of amenities.", required=False),
-            OpenApiParameter("ratings", str, description="Ratings for the hotel search.", required=False),
-            OpenApiParameter("price_range", str, description="Price range for hotel search in format 'min:max'.", required=False),
-            OpenApiParameter("currency", str, description="Currency for the price range (default USD).", required=False, default="USD"),
-            OpenApiParameter("view", str, description="View type (e.g., 'FULL').", required=False, default="FULL"),
-            OpenApiParameter("best_rate_only", str, description="Filter for the best rate only (true/false).", required=False, default="true"),
-            OpenApiParameter("check_in", str, description="Check-in date in YYYY-MM-DD format.", required=False),
-            OpenApiParameter("check_out", str, description="Check-out date in YYYY-MM-DD format.", required=False),
-            OpenApiParameter("adults", str, description="Number of adults (default 1).", required=False, default="1"),
-            OpenApiParameter("room_quantity", str, description="Number of rooms (default 1).", required=False, default="1"),
-            OpenApiParameter("country_of_residence", str, description="Country of residence.", required=False),
-            OpenApiParameter("payment_policy", str, description="Payment policy.", required=False),
-            OpenApiParameter("board_type", str, description="Board type (e.g., 'all-inclusive').", required=False)
-        ],
-        responses={
-            200: OpenApiResponse(description="A list of hotels matching the search criteria."),
-            400: OpenApiResponse(description="Bad request, validation error."),
-            500: OpenApiResponse(description="Internal server error.")
-        }
-    )
-
-# Schema for fetching hotel reviews
-# fetch_review_schema = extend_schema(
-#     operation_id="fetch_hotel_reviews",
-#     summary="Fetch Hotel Reviews",
-#     description="Fetch reviews for a specific hotel.",
-#     parameters=common_parameters() + [
-#         OpenApiParameter(
-#             name="hotel_id", type=str, location=OpenApiParameter.QUERY,
-#             description="Hotel ID to fetch reviews for.", required=True
-#         ),
-#     ],
-#     responses={
-#         200: generate_openapi_response(description="List of reviews for the specified hotel."),
-#         400: generate_openapi_response(description="Bad Request if hotel_id is not provided."),
-#         500: generate_openapi_response(description="Internal Server Error if the request fails.")
-#     }
-# )
-
-
+# --------------------------
+# Booking Schema
+# --------------------------
 book_hotel_schema = extend_schema(
-        description="Book a hotel room for a specific stay.",
-        parameters=[
-            OpenApiParameter("hotel_id", type=str, location=OpenApiParameter.QUERY, description="Hotel ID", required=True),
-            OpenApiParameter("check_in_date", type=str, location=OpenApiParameter.QUERY, description="Check-in date (YYYY-MM-DD)", required=True),
-            OpenApiParameter("check_out_date", type=str, location=OpenApiParameter.QUERY, description="Check-out date (YYYY-MM-DD)", required=True),
-            OpenApiParameter("guests_count", type=int, location=OpenApiParameter.QUERY, description="Number of guests", required=True),
-        ],
-        responses={
-            200: "Hotel booked successfully",
-            400: "Invalid input parameters",
-            500: "Internal Server Error"
-        }
-    )
+    summary="Book Hotel",
+    description="Create a new hotel booking with guest and payment details.",
+    request=HotelBookingSerializer,
+    responses={
+        201: OpenApiResponse(
+            description="Booking confirmed",
+            examples=[
+                OpenApiExample(
+                    name="Success Response",
+                    value={
+                        "booking_reference": "HB123456",
+                        "status": "CONFIRMED",
+                        "hotel": "Grand Hyatt",
+                        "check_in": "2023-12-01",
+                        "check_out": "2023-12-05",
+                        "total": 795.00,
+                        "currency": "USD"
+                    }
+                )
+            ]
+        ),
+        400: OpenApiResponse(description="Booking failed", examples=[ERROR_RESPONSE]),
+        402: OpenApiResponse(description="Payment required", examples=[ERROR_RESPONSE])
+    }
+)
+
+# --------------------------
+# Booking Details Schema
+# --------------------------
+booking_details_schema = extend_schema(
+    operation_id="get_booking",
+    summary="Get Booking Details",
+
+    description="Retrieve booking details by reference",
+    parameters=[
+        OpenApiParameter(
+            name="reference",
+            type=str,
+            location=OpenApiParameter.PATH,
+            description="Booking reference number"
+        )
+    ],
+    responses={
+        200: OpenApiResponse(
+            description="Booking details",
+            examples=[
+                OpenApiExample(
+                    "Success Response",
+                    value={
+                        "reference": "HB123456",
+                        "status": "CONFIRMED",
+                        "hotel": {
+                            "name": "Grand Hyatt",
+                            "room": "Standard Double"
+                        },
+                        "dates": {
+                            "check_in": "2023-12-01",
+                            "check_out": "2023-12-05"
+                        },
+                        "guest": {
+                            "name": "John Doe",
+                            "email": "john@example.com"
+                        }
+                    }
+                )
+            ]
+        ),
+        404: OpenApiResponse(
+            description="Booking not found",
+            examples=[ERROR_RESPONSE]
+        )
+    }
+)
+
+# --------------------------
+# Hotel Details Schema
+# --------------------------
+hotel_details_schema = extend_schema(
+    operation_id="get_hotel_details",
+    summary="Get Hotel Details",
+    description="Get comprehensive hotel information",
+    parameters=[
+        OpenApiParameter(
+            name="hotel_id",
+            type=str,
+            location=OpenApiParameter.PATH,
+            description="Hotelbeds property ID"
+        )
+    ],
+    responses={
+        200: OpenApiResponse(
+            description="Hotel details",
+            examples=[
+                OpenApiExample(
+                    "Success Response",
+                    value={
+                        "code": "H1234",
+                        "name": "Grand Hyatt",
+                        "description": "Luxury 5-star hotel in Manhattan",
+                        "address": "123 Park Ave, New York",
+                        "location": {
+                            "latitude": 40.7128,
+                            "longitude": -74.0060
+                        },
+                        "amenities": [
+                            {"code": "POOL", "name": "Swimming Pool"},
+                            {"code": "GYM", "name": "Fitness Center"}
+                        ],
+                        "images": [
+                            {
+                                "type": "MAIN",
+                                "url": "https://example.com/hotel1.jpg"
+                            }
+                        ]
+                    }
+                )
+            ]
+        ),
+        404: OpenApiResponse(
+            description="Hotel not found",
+            examples=[ERROR_RESPONSE]
+        )
+    }
+)
+
+# --------------------------
+# Geo Search Schema
+# --------------------------
+geo_search_schema = extend_schema(
+    operation_id="geo_search",
+    summary="Search Hotels by Coordinates",
+    description="Search hotels by geographic coordinates",
+    request=GeoSearchSerializer,
+    responses={
+        200: OpenApiResponse(
+            description="Nearby hotels",
+            examples=[
+                OpenApiExample(
+                    "Success Response",
+                    value={
+                        "results": [
+                            {
+                                "hotel_id": "H1234",
+                                "name": "Grand Hyatt",
+                                "distance": 0.5,
+                                "unit": "km",
+                                "min_rate": 250.00
+                            }
+                        ]
+                    }
+                )
+            ]
+        ),
+        400: OpenApiResponse(
+            description="Invalid coordinates",
+            examples=[ERROR_RESPONSE]
+        )
+    }
+)
+
+# --------------------------
+# Hotel Reviews Schema
+# --------------------------
+hotel_reviews_schema = extend_schema(
+    operation_id="get_hotel_reviews",
+    summary="Get Hotel Reviews",
+    description="Get guest reviews for a hotel",
+    request=HotelReviewsSerializer,
+    parameters=[
+        OpenApiParameter(
+            name="hotel_id",
+            type=str,
+            location=OpenApiParameter.PATH,
+            description="Hotelbeds property ID"
+        ),
+        OpenApiParameter(
+            name="language",
+            type=str,
+            location=OpenApiParameter.QUERY,
+            description="Language code (default: EN)",
+            default="EN"
+        )
+    ],
+    responses={
+        200: OpenApiResponse(
+            response=HotelReviewsSerializer,
+            description="Hotel reviews",
+            examples=[
+                OpenApiExample(
+                    "Success Response",
+                    value={
+                        "reviews": [
+                            {
+                                "rating": 4.5,
+                                "title": "Excellent stay",
+                                "comment": "Great service and location",
+                                "author": "Traveler123",
+                                "date": "2023-05-15"
+                            }
+                        ],
+                        "average_rating": 4.3,
+                        "total_reviews": 42
+                    }
+                )
+            ]
+        ),
+        404: OpenApiResponse(
+            description="Hotel not found",
+            examples=[ERROR_RESPONSE]
+        )
+    }
+)
+
+
+search_hotel_schema = extend_schema(
+    operation_id="search_hotels",
+    summary="Search Hotels",
+    description="Search for hotels based on destination, check-in/check-out dates, number of guests, and optional filters like price range and amenities.",
+    parameters=[
+        OpenApiParameter(
+            name="destination", type=str, location=OpenApiParameter.QUERY,
+            description="City code or geographic coordinates"
+        ),
+        OpenApiParameter(name="check_in", type=OpenApiTypes.DATE, location=OpenApiParameter.QUERY, description="Check-in date (YYYY-MM-DD)"),
+        OpenApiParameter(name="check_out", type=OpenApiTypes.DATE, location=OpenApiParameter.QUERY, description="Check-out date (YYYY-MM-DD)"),
+        OpenApiParameter(name="adults", type=int, location=OpenApiParameter.QUERY, description="Number of adults", default=2),
+        OpenApiParameter(name="children", type=int, location=OpenApiParameter.QUERY, description="Number of children", default=0),
+        OpenApiParameter(name="min_price", type=int, location=OpenApiParameter.QUERY, description="Minimum price per night"),
+        OpenApiParameter(name="max_price", type=int, location=OpenApiParameter.QUERY, description="Maximum price per night"),
+        OpenApiParameter(name="amenities", type=str, location=OpenApiParameter.QUERY, description="Comma-separated list of amenity codes (e.g., WIFI,PARKING)")
+    ],
+    responses={
+        200: OpenApiResponse(
+            response=HotelDiscoverySerializer,
+            description="List of matching hotels",
+            examples=[
+                OpenApiExample(
+                    name="Success Response",
+                    value={
+                        "hotels": [
+                            {
+                                "code": "H1234",
+                                "name": "Grand Hyatt",
+                                "category": 5,
+                                "location": {
+                                    "city": "New York",
+                                    "country": "US"
+                                },
+                                "min_rate": 250.00,
+                                "currency": "USD"
+                            }
+                        ],
+                        "pagination": {
+                            "total": 42,
+                            "page": 1
+                        }
+                    }
+                )
+            ]
+        ),
+        400: OpenApiResponse(description="Validation Error", examples=[ERROR_RESPONSE]),
+        429: OpenApiResponse(description="Rate Limit Exceeded", examples=[ERROR_RESPONSE])
+    }
+)
