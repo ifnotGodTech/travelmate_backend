@@ -1,459 +1,231 @@
-import json
-from core.amadeus import amadeus_client
-from core.amadeus.amadeus_client2 import BookingAmadeusClient
-from core.helpers.enums import GenderChoice
-from rest_framework import  status
+from core.applications.stay.services.exceptions import HotelbedsAPIError
+from core.applications.stay.services.hotelbads import HotelbedsService
 from rest_framework.viewsets import ViewSet
-
-from core.amadeus.amadeus_services import  book_hotel_room, fetch_hotel_details, fetch_hotel_reviews, list_or_fetch_hotels_by_city, search_hotels
-from rest_framework.response import Response
-from core.applications.stay.api.schemas import (
-    comprehensive_search_schema, list_hotel_schema, hotel_availability_schema,
-    property_info_schema
-)
-from django.utils import timezone
-from typing import Optional
-from datetime import datetime, timedelta
-from django.core.exceptions import ValidationError
-
-from amadeus import ResponseError, Location
-import logging
-from core.helpers.authentication import CustomJWTAuthentication
-from djoser.conf import settings as djoser_settings
-from django.conf import settings as django_settings
 from rest_framework.decorators import action
-from django.http import JsonResponse
+from rest_framework.response import Response
+from rest_framework import status
+from rest_framework.throttling import UserRateThrottle
 
+from core.applications.stay.api.serializers import (
+    HotelDiscoverySerializer,
+    AvailabilityCheckSerializer,
+    HotelBookingSerializer,
+    GeoSearchSerializer,
+    HotelReviewsSerializer,
+    HotelSearchSerializer
+)
 
-logger = logging.getLogger(__name__)
+from core.applications.stay.api.schemas import  (
+    availability_schema, book_hotel_schema, search_hotel_schema,
+    booking_details_schema, hotel_details_schema, geo_search_schema,
+    hotel_reviews_schema, discover_hotel_schema
+)
 
+import logging
+
+logger = logging.getLogger('hotelbeds.views')
 
 class HotelApiViewSet(ViewSet):
     """
-    ViewSet for hotel operations integrating with Amadeus API.
-    Provides endpoints for hotel discovery, availability checking, and property details.
+    Hotelbeds API Integration
+
+    Provides endpoints for:
+    - Hotel discovery
+    - Availability checking
+    - Booking management
+    - Hotel information
     """
-    authentication_class = [CustomJWTAuthentication]
-    permission_classes = djoser_settings.PERMISSIONS.user
 
-    # --- Hotel Discovery Endpoints ---
-    @list_hotel_schema
-    def list(self, request):
-        """
-        Discover hotels by city with optional filters.
-        Returns basic property information for hotels in a specified city.
-        """
-        city_code = request.query_params.get("city_code")
-        if not city_code:
+    service = HotelbedsService()
+    # throttle_classes = [UserRateThrottle]
+
+    def handle_exception(self, exc):
+        """Custom exception handler for Hotelbeds API errors"""
+        if isinstance(exc, HotelbedsAPIError):
+            logger.error(f"Hotelbeds API error: {str(exc)}")
             return Response(
-                {"error": "City code is required"},
+                {'error': str(exc)},
                 status=status.HTTP_400_BAD_REQUEST
             )
+        return super().handle_exception(exc)
 
-        # Extract optional filters from query params
-        filters = {
-            "latitude": request.query_params.get("lat"),
-            "longitude": request.query_params.get("lon"),
-            "radius": request.query_params.get("radius"),
-            "radiusUnit": request.query_params.get("radius_unit"),
-            "hotelName": request.query_params.get("hotel_name"),
-            "chains": request.query_params.get("chains"),
-            "amenities": request.query_params.get("amenities"),
-            "ratings": request.query_params.get("ratings")
-        }
+    @search_hotel_schema
+    @action(detail=False, methods=['GET'])
+    def search(self, request):
+        """
+        Search hotels with flexible criteria
 
-        hotels = list_or_fetch_hotels_by_city(city_code, **{
-            k: v for k, v in filters.items() if v is not None
-        })
+        Query Params:
+        - destination (str): City code or geographic coordinates
+        - check_in (str): YYYY-MM-DD
+        - check_out (str): YYYY-MM-DD
+        - adults (int): Default=2
+        - children (int): Default=0
+        - min_price (int): Optional
+        - max_price (int): Optional
+        - amenities (str): Comma-separated codes (e.g., "WIFI,PARKING")
+        """
+        serializer = HotelSearchSerializer(data=request.query_params)
+        serializer.is_valid(raise_exception=True)
 
-        return Response(
-            hotels,
-            status=status.HTTP_200_OK if isinstance(hotels, list) else status.HTTP_500_INTERNAL_SERVER_ERROR
+        validated = serializer.validated_data
+
+        # Parse amenities only if provided
+        amenities = validated.get("amenities")
+        amenity_list = (
+            [a.strip() for a in amenities.split(",") if a.strip()]
+            if amenities
+            else []
         )
 
-    # --- Availability Endpoints ---
-    @hotel_availability_schema
-    @action(detail=False, methods=["get"], url_path="availability")
-    def check_availability(self, request):
-        """
-        Check real-time availability and rates for specific hotels.
-        Returns room types, prices, and booking conditions.
-        """
-        hotel_ids = request.query_params.getlist("hotelIds")
-        if not hotel_ids:
-            return Response(
-                {"error": "At least one hotelId is required"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # Set default dates if not provided
-        check_in = request.query_params.get(
-            "checkInDate",
-            datetime.today().strftime("%Y-%m-%d")
-        )
-        check_out = request.query_params.get(
-            "checkOutDate",
-            (datetime.today() + timedelta(days=1)).strftime("%Y-%m-%d")
-        )
-
-        # Get search parameters
-        search_params = {
-            "hotel_ids": hotel_ids,
-            "check_in": check_in,
-            "check_out": check_out,
-            "adults": request.query_params.get("adults", "1"),
-            "room_quantity": request.query_params.get("roomQuantity", "1"),
-            "country_of_residence": request.query_params.get("countryOfResidence"),
-            "price_range": request.query_params.get("priceRange")
-        }
-
-        response = search_hotels(**search_params)
-        return Response(
-            response,
-            status=status.HTTP_200_OK if isinstance(response, list) else status.HTTP_400_BAD_REQUEST
-        )
-
-    # --- Property Information Endpoints ---
-    @property_info_schema
-    @action(detail=False, methods=["get"], url_path="property-info")
-    def get_property_info(self, request):
-        """
-        Retrieve comprehensive property details including amenities, descriptions,
-        and media for a specific hotel.
-        """
-        hotel_id = request.query_params.get("hotel_id")
-        if not hotel_id:
-            return Response(
-                {"error": "hotel_id is required"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
         try:
-            response = fetch_hotel_details(hotel_id)
-            return Response(
-                response,
-                status=status.HTTP_200_OK
-            )
-        except ResponseError as amadeus_error:
-            logger.error(f"Amadeus API Error: {amadeus_error}")
-            return Response(
-                {"error": str(amadeus_error)},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            logger.error(f"Error in get_property_info: {str(e)}", exc_info=True)
-            return Response(
-                {"error": "Internal server error"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-    @comprehensive_search_schema
-    @action(detail=False, methods=["get"], url_path="full-search")
-    def comprehensive_search(self, request):
-        """
-        Unified hotel search endpoint with comprehensive validation and error handling.
-        Supports both discovery (general search) and availability (specific hotels) modes.
-        """
-        try:
-            # ===== 1. ENHANCED PARAMETER VALIDATION =====
-            self._validate_location_params(request)
-            params = self._build_search_params(request)
-
-            # ===== 2. DATE VALIDATION =====
-            if request.query_params.get('check_in'):
-                self._validate_dates(request)
-                params.update(self._build_availability_params(request))
-
-            # ===== 3. API REQUEST EXECUTION =====
-            clean_params = {k: v for k, v in params.items() if v is not None}
-            logger.info(f"Amadeus API Request: {clean_params}")
-
-            response = self._execute_amadeus_request(clean_params)
-
-            # ===== 4. RESPONSE PROCESSING =====
-            return Response(
-                self._format_response(response.data),
-                status=status.HTTP_200_OK
-            )
-
-        except ValidationError as e:
-            logger.warning(f"Validation error: {str(e)}")
-            return Response(
-                {"error": str(e)},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        except ResponseError as error:
-            error_details = self._parse_amadeus_error(error)
-            logger.error(f"Amadeus API Error: {error_details}")
-            return Response(
-                {"error": "Hotel search failed", "details": error_details},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            logger.critical(f"Unexpected error: {str(e)}", exc_info=True)
-            return Response(
-                {"error": "Internal server error"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-    # Helper Methods --------------------------------------------------
-
-    def _validate_location_params(self, request):
-        """Validate at least one location parameter exists"""
-        if not any([
-            request.query_params.get('city_code'),
-            request.query_params.get('lat'),
-            request.query_params.get('keyword'),
-            request.query_params.get('hotel_ids')
-        ]):
-            raise ValidationError("Provide city_code, lat/lon, keyword, or hotel_ids")
-
-    def _validate_dates(self, request):
-        """Validate date parameters with business rules"""
-        check_in = request.query_params.get('check_in')
-        check_out = request.query_params.get('check_out')
-
-        if not check_out:
-            raise ValidationError("Check-out date required when check-in is provided")
-
-        try:
-            check_in_date = datetime.strptime(check_in, "%Y-%m-%d").date()
-            check_out_date = datetime.strptime(check_out, "%Y-%m-%d").date()
-        except ValueError:
-            raise ValidationError("Invalid date format. Use YYYY-MM-DD")
-
-        today = datetime.now().date()
-        if check_in_date < today:
-            raise ValidationError("Check-in date cannot be in the past")
-        if check_out_date <= check_in_date:
-            raise ValidationError("Check-out must be after check-in")
-        if (check_out_date - check_in_date).days > 30:
-            raise ValidationError("Maximum stay duration is 30 days")
-
-    def _build_search_params(self, request):
-        """Construct base search parameters with defaults"""
-        return {
-            'cityCode': request.query_params.get('city_code'),
-            'keyword': request.query_params.get('keyword'),
-            'latitude': request.query_params.get('lat'),
-            'longitude': request.query_params.get('lon'),
-            'hotelIds': self._parse_hotel_ids(request),
-            'radius': request.query_params.get('radius', '50'),
-            'radiusUnit': request.query_params.get('radius_unit', 'KM').upper(),
-            'chainCodes': request.query_params.get('chains'),
-            'amenities': request.query_params.get('amenities'),
-            'ratings': request.query_params.get('ratings'),
-            'priceRange': self._validate_price_range(request.query_params.get('price_range')),
-            'currency': request.query_params.get('currency', 'USD').upper(),
-            'view': request.query_params.get('view', 'FULL').upper(),
-            'bestRateOnly': str(request.query_params.get('best_rate_only', 'true')).lower() == 'true',
-        }
-
-    def _build_availability_params(self, request):
-        """Construct availability-specific parameters"""
-        return {
-            'checkInDate': request.query_params.get('check_in'),
-            'checkOutDate': request.query_params.get('check_out'),
-            'adults': request.query_params.get('adults', '1'),
-            'roomQuantity': request.query_params.get('room_quantity', '1'),
-            'countryOfResidence': request.query_params.get('country_of_residence'),
-            'paymentPolicy': request.query_params.get('payment_policy'),
-            'boardType': request.query_params.get('board_type'),
-        }
-
-    def _parse_hotel_ids(self, request):
-        hotel_ids_param = request.query_params.get('hotel_ids')
-        if not hotel_ids_param:
-            return None
-
-        ids = [id.strip() for id in hotel_ids_param.split(',') if id.strip()]
-        if not ids:
-            return None
-
-        return ",".join(ids)
-
-    def _execute_amadeus_request(self, params):
-        # Check for hotelIds (for specific hotels search)
-        if "hotelIds" in params:
-            return amadeus_client.shopping.hotel_offers_search.get(**params)
-
-        # Check for cityCode (for city-based hotel search)
-        elif "cityCode" in params:
-            return amadeus_client.shopping.hotel_offers_search.get(**params)
-
-        # Check for latitude and longitude (for geo-based hotel search)
-        elif "latitude" in params and "longitude" in params:
-            return amadeus_client.shopping.hotel_offers_search.get(**params)
-
-        # Raise an error if none of the parameters are present
-        else:
-            raise ValueError("Invalid search mode — please provide hotelIds, cityCode, or lat/lon")
-
-
-    def _format_response(self, data):
-        """
-        Format the response data returned by the Amadeus API.
-        This method assumes that data can either be a list or a dictionary.
-        """
-        # Check if the data is a list or a dictionary and format accordingly
-        if isinstance(data, list):
-            # If it's a list, return the list as is, or modify the structure if needed
-            formatted_data = {
-                "hotels": data,  # Assuming `data` is the list of hotels
-                "total_count": len(data)  # You can modify this based on the actual response
-            }
-        elif isinstance(data, dict):
-            # If it's a dictionary, access keys like normal
-            formatted_data = {
-                "hotels": data.get("hotels", []),  # Assuming `hotels` is a key in the response
-                "total_count": data.get("total_count", 0)
-            }
-        else:
-            # Handle other unexpected formats or raise an error
-            formatted_data = {
-                "error": "Unexpected response format"
-            }
-
-        return formatted_data
-
-
-    def _parse_amadeus_error(self, error):
-        """Extract relevant error details from Amadeus response"""
-        return {
-            "status_code": error.response.status_code,
-            "message": str(error),
-            "amadeus_response": getattr(error.response, 'result', None),
-        }
-
-    def _validate_price_range(self, price_range_str: Optional[str]) -> Optional[str]:
-        """
-        Validates price range format (min:max) and ensures min <= max.
-        Returns formatted string or raises ValidationError.
-        """
-        if not price_range_str:
-            return None
-
-        try:
-            min_price, max_price = map(float, price_range_str.split(':'))
-        except ValueError:
-            raise ValidationError("Price range must be in format 'min:max' (e.g., '100:200')")
-
-        if min_price < 0 or max_price < 0:
-            raise ValidationError("Prices cannot be negative")
-
-        if min_price > max_price:
-            raise ValidationError("Minimum price cannot exceed maximum price")
-
-        return f"{int(min_price)}:{int(max_price)}"
-
-    # @fetch_review_schema
-    @action(detail=True, methods=["get"], url_path="reviews")
-    def get_hotel_reviews(self, request, pk=None):
-        """
-        Fetch reviews for a specific hotel based on hotel_id.
-        """
-        hotel_id = pk  # 'pk' comes from the URL path (e.g., /api/hotels/reviews/{hotel_id}/)
-
-        if not hotel_id:
-            return Response(
-                {"error": "hotel_id is required"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        try:
-            reviews = fetch_hotel_reviews(hotel_id)  # Assuming this function interacts with the Amadeus API
-            return Response(
-                reviews,
-                status=status.HTTP_200_OK
-            )
-        except ResponseError as amadeus_error:
-            logger.error(f"Amadeus API Error: {amadeus_error}")
-            return Response(
-                {"error": str(amadeus_error)},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            logger.error(f"Error in get_hotel_reviews: {str(e)}", exc_info=True)
-            return Response(
-                {"error": "Internal server error"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-
-
-    @action(detail=False, methods=["post"], url_path="book-hotel")
-    def book_hotel(self, request):
-        offer_id = request.data.get("offer_id")
-        guests = request.data.get("guests")
-        payments = request.data.get("payments")
-
-        if not all([offer_id, guests, payments]):
-            logger.warning("Missing booking parameters", extra={"request_data": request.data})
-            return Response(
-                {
-                    "error": "Missing required parameters",
-                    "required_fields": ["offer_id", "guests", "payments"],
-                    "received": {k: v is not None for k, v in request.data.items()}
+            results = self.service.search_hotels(
+                destination=validated["destination"],
+                check_in=validated["check_in"],   # now properly formatted date object
+                check_out=validated["check_out"], # now properly formatted date object
+                adults=validated.get("adults", 2),
+                children=validated.get("children", 0),
+                filters={
+                    "min_price": validated.get("min_price"),
+                    "max_price": validated.get("max_price"),
+                    "amenities": amenity_list,
                 },
-                status=status.HTTP_400_BAD_REQUEST
             )
+            return Response(results)
+        except HotelbedsAPIError as e:
+            raise  # Will be handled globally if set up
 
-        def attempt_booking():
-            client = BookingAmadeusClient().get_client()
-            # ✅ Use positional arguments, NOT keyword arguments
-            return client.booking.hotel_bookings.post(
-                [{"id": offer_id}],  # hotel_offers as first argument
-                guests,              # second: guests
-                payments             # third: payments
-            )
+    @discover_hotel_schema
+    @action(detail=False, methods=['GET'])
+    def discover(self, request):
+        """
+        Discover hotels in a specific city
 
-        try:
-            response = attempt_booking()
+        Parameters:
+        - city_code: Required IATA city code
+        - language: Optional language code (default: ENG)
+        - ratings: Optional list of star ratings (1-5)
+        - amenities: Optional list of amenity codes
+        - page: Optional page number (default: 1)
+        - page_size: Optional items per page (default: 20)
+        """
+        serializer = HotelDiscoverySerializer(data=request.query_params)
+        serializer.is_valid(raise_exception=True)
 
-            logger.info("Hotel booking successful", extra={"offer_id": offer_id, "guest_count": len(guests)})
-            return Response({
-                "message": "Hotel booked successfully",
-                "data": response.data,
-                "booking_reference": response.result.get("bookingId")
-            }, status=status.HTTP_200_OK)
+        results = self.service.discover_hotels(
+            city_code=serializer.validated_data['city_code'],
+            filters=serializer.validated_data
+        )
+        return Response(results)
 
-        except ResponseError as e:
-            if getattr(e, 'code', None) == 38190:
-                logger.info("Access token expired, retrying...")
-                # Try to refresh the access token and make the booking again
-                try:
-                    # Re-initialize the Amadeus client and retry the booking
-                    client = BookingAmadeusClient()
-                    client.client = client._initialize_client()  # Refresh the client with new credentials
-                    response = attempt_booking()
+    @availability_schema
+    @action(detail=False, methods=['POST'])
+    def availability(self, request):
+        """
+        Check hotel availability
 
-                    logger.info("Hotel booked after token refresh", extra={"offer_id": offer_id})
-                    return Response({
-                        "message": "Hotel booked successfully after token refresh",
-                        "data": response.data,
-                        "booking_reference": response.result.get("bookingId")
-                    }, status=status.HTTP_200_OK)
+        Parameters (in request body):
+        - hotel_id: Required hotel ID
+        - check_in: Required check-in date (YYYY-MM-DD)
+        - check_out: Required check-out date (YYYY-MM-DD)
+        - adults: Optional number of adults (default: 2)
+        - children: Optional number of children (default: 0)
+        """
+        serializer = AvailabilityCheckSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
 
-                except Exception as retry_error:
-                    logger.error("Retry failed after token refresh", exc_info=True)
-                    return Response({
-                        "error": "Booking failed after token refresh",
-                        "details": str(retry_error)
-                    }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        results = self.service.check_availability(
+            hotel_id=serializer.validated_data['hotel_id'],
+            check_in=serializer.validated_data['check_in'],
+            check_out=serializer.validated_data['check_out'],
+            adults=serializer.validated_data.get('adults', 2),
+            children=serializer.validated_data.get('children', 0)
+        )
+        return Response(results)
 
-            logger.error("Amadeus API error during booking", extra={
-                "offer_id": offer_id,
-                "error_details": str(e)
-            })
-            return Response({
-                "error": "Amadeus API booking failure",
-                "details": str(e)
-            }, status=getattr(e.response, 'status_code', status.HTTP_400_BAD_REQUEST))
+    @book_hotel_schema
+    @action(detail=False, methods=['POST'])
+    def book(self, request):
+        """
+        Create a hotel booking
 
-        except Exception as e:
-            logger.critical("Unexpected error during hotel booking", exc_info=True)
-            return Response({
-                "error": "Internal booking system error",
-                "reference_id": f"ERR-{timezone.now().timestamp()}",
-                "contact_support": True
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        Parameters (in request body):
+        - holder_name: Booking holder first name
+        - holder_surname: Booking holder last name
+        - holder_email: Booking holder email
+        - holder_phone: Booking holder phone
+        - rooms: List of rooms to book (each with rate_key and paxes)
+        - payment_data: Payment information
+        - special_requests: Optional special requests
+        """
+        serializer = HotelBookingSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        booking = self.service.create_booking(
+            rate_key=serializer.validated_data['rooms'][0]['rate_key'],
+            holder_info={
+                'name': serializer.validated_data['holder_name'],
+                'surname': serializer.validated_data['holder_surname'],
+                'email': serializer.validated_data['holder_email'],
+                'phone': serializer.validated_data['holder_phone']
+            },
+            payment_data=serializer.validated_data['payment_data'],
+            rooms=serializer.validated_data['rooms']
+        )
+        return Response(booking, status=status.HTTP_201_CREATED)
+
+    @booking_details_schema
+    @action(detail=False, methods=['GET'], url_path='bookings/(?P<reference>[^/.]+)')
+    def booking_details(self, request, reference=None):
+        """Get booking details by reference"""
+        results = self.service.get_booking(reference)
+        return Response(results)
+
+    @action(detail=False, methods=['DELETE'], url_path='bookings/(?P<reference>[^/.]+)/cancel')
+    def cancel_booking(self, request, reference=None):
+        """Cancel booking by reference"""
+        results = self.service.cancel_booking(reference)
+        return Response(results)
+
+    @hotel_details_schema
+    @action(detail=False, methods=['GET'], url_path='hotels/(?P<hotel_id>[^/.]+)/details')
+    def hotel_details(self, request, hotel_id=None):
+        """Get hotel details by ID"""
+        results = self.service.get_hotel_details(hotel_id)
+        return Response(results)
+
+    @hotel_reviews_schema
+    @action(detail=False, methods=['GET'], url_path='hotels/(?P<hotel_id>[^/.]+)/reviews')
+    def hotel_reviews(self, request, hotel_id=None):
+        """Get hotel reviews by ID"""
+        serializer = HotelReviewsSerializer(data=request.query_params)
+        serializer.is_valid(raise_exception=True)
+
+        results = self.service.get_hotel_reviews(
+            hotel_id=hotel_id,
+            language=serializer.validated_data.get('language', 'ENG')
+        )
+        return Response(results)
+
+    @geo_search_schema
+    @action(detail=False, methods=['GET'])
+    def geo_search(self, request):
+        """
+        Search hotels by geographic coordinates
+
+        Parameters:
+        - latitude: Required latitude
+        - longitude: Required longitude
+        - radius: Optional search radius (default: 10)
+        - unit: Optional distance unit (KM or MI, default: KM)
+        """
+        serializer = GeoSearchSerializer(data=request.query_params)
+        serializer.is_valid(raise_exception=True)
+
+        results = self.service.geo_search(
+            latitude=serializer.validated_data['latitude'],
+            longitude=serializer.validated_data['longitude'],
+            radius=serializer.validated_data.get('radius', 10),
+            unit=serializer.validated_data.get('unit', 'KM')
+        )
+        return Response(results)

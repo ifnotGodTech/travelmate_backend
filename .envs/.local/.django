@@ -28,10 +28,23 @@ STRIPE_SECRET_TEST_KEY=sk_test_51NVZDJCcgYR1TR2JPq2txDsyF7VIsn73ZJ4tu9NwLgA7IfcG
 STRIPE_API_TESTING=True
 STRIPE_WEBHOOK_SECRET=whsec_f2d18832f982011fae319508587da91e166a782e45db8e24e3ddf08be4b5a857
 
-
+# google api key
 GOOGLE_CLIENT_ID=283989752333-9n4hd14j9kc1p3v71dsup80t15gk295t.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=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
 GOOGLE_API_KEY=""
 
+# facebook api key
 FACEBOOK_CLIENT_ID=697520719429044
 FACEBOOK_CLIENT_SECRET=2222a52da5423e7500be33c666a2b708
+
+# hotelbeds
+# ------------------------------------------------------------------------------
+HOTELBEDS_API_TEST_KEY=7e84c5512a72bbd254ea5916107328c1
+HOTELBEDS_API_TEST_SECRET=ceb592909c
+HOTELBEDS_API_TEST_BASE_URL=https://api.test.hotelbeds.com
+
+# Production Environment (comment when testing)
+HOTELBEDS_API_PROD_KEY="your_prod_key"
+HOTELBEDS_API_PROD_SECRET="your_prod_secret"
+HOTELBEDS_API_PROD_BASE_URL=https://api.hotelbeds.com
+HOTELBEDS_API_TESTING=True
