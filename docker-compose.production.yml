@@ -23,6 +23,9 @@ services:
     env_file:
       - ./.envs/.production/.django
       - ./.envs/.production/.postgres
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     command: /start
 
   postgres:
