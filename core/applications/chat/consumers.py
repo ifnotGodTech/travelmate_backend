@@ -7,6 +7,10 @@ from .models import ChatSession, ChatMessage
 User = get_user_model()
 
 class ChatConsumer(AsyncWebsocketConsumer):
+    @database_sync_to_async
+    def check_session_access(self, session_id, user):
+        return True  # Allow access for everyone
+
     async def connect(self):
         self.user = self.scope['user']
 
@@ -81,6 +85,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
             'created_at': event['created_at'],
         }))
 
+
+
     # Receive notification about session updates
     async def session_update(self, event):
         # Send session update to WebSocket
@@ -94,13 +100,13 @@ class ChatConsumer(AsyncWebsocketConsumer):
     def check_session_access(self, session_id, user):
         try:
             session = ChatSession.objects.get(id=session_id)
-            # Admin can access any session
-            if user.is_staff:
-                return True
-            # Regular user can only access their own sessions
-            return session.user == user
         except ChatSession.DoesNotExist:
-            return False
+            return False  # Session does not exist
+
+        # Check if the user is allowed to access the session
+        if user.is_staff or session.user == user:  # Example: admin or session owner
+            return True
+        return False
 
     @database_sync_to_async
     def save_message(self, session_id, user, message):
