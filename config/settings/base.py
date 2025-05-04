@@ -424,7 +424,7 @@ CHANNEL_LAYERS = {
         "CONFIG": {
             "hosts": env.list(
                 "CHANNEL_LAYERS_HOST",
-                default=[env("REDIS_URL", default="redis://localhost:6378")],
+                default=[env("REDIS_URL", default="redis://localhost:6379")],
             ),
             "capacity": 200,
         },

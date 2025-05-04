@@ -15,7 +15,9 @@ from pathlib import Path
 
 from django.core.asgi import get_asgi_application
 from channels.routing import ProtocolTypeRouter, URLRouter
+from core.applications.chat.jwt_middleware import JWTMiddleware
 from channels.auth import AuthMiddlewareStack
+
 
 # This allows easy placement of apps within the interior
 # travelmate_backend directory.
@@ -37,7 +39,7 @@ from config.websocket import websocket_application as original_websocket_applica
 # Create a ProtocolTypeRouter
 application = ProtocolTypeRouter({
     "http": django_application,
-    "websocket": AuthMiddlewareStack(
+    "websocket": JWTMiddleware(
         URLRouter(
             chat_websocket_urlpatterns
 
