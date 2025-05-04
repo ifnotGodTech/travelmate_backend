@@ -283,6 +283,7 @@ LOGGING = {
 
 REDIS_URL = env("REDIS_URL", default="redis://redis:6379/0")
 REDIS_SSL = REDIS_URL.startswith("rediss://")
+CACHE_TIMEOUT=3600  # 1 hour
 
 # Celery
 # ------------------------------------------------------------------------------
@@ -357,7 +358,7 @@ SOCIALACCOUNT_AUTO_SIGNUP = True
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "core.helpers.authentication.CustomJWTAuthentication",
-        "rest_framework.authentication.SessionAuthentication",
+        # "rest_framework.authentication.SessionAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
@@ -365,7 +366,8 @@ REST_FRAMEWORK = {
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 10,
     "DEFAULT_THROTTLE_RATES": {
-        "anon": "5/hour"
+        "anon": "5/hour",
+        "user": "10/day",
     }
 
 }
@@ -490,6 +492,32 @@ STRIPE_SECRET_TEST_KEY = env("STRIPE_SECRET_TEST_KEY")
 STRIPE_API_TESTING = env.bool("STRIPE_API_TESTING", True)
 STRIPE_WEBHOOK_SECRET = env('STRIPE_WEBHOOK_SECRET', default='')
 
+# Hotelbeds Configuration
+HOTELBEDS_CONFIG = {
+    # Environment mode (testing/production) - Default to True for safety
+    "testing": env.bool("HOTELBEDS_API_TESTING", default=True),
+
+    # Test environment (Sandbox)
+    "test": {
+        "api_key": env("HOTELBEDS_API_TEST_KEY", default=""),  # Never hardcode keys
+        "api_secret": env("HOTELBEDS_API_TEST_SECRET", default=""),
+        "base_url": env(
+            "HOTELBEDS_API_TEST_BASE_URL",
+            default="https://api.test.hotelbeds.com"  # Default test endpoint
+        ),
+    },
+
+    # Production environment (Live)
+    "production": {
+        "api_key": env("HOTELBEDS_API_PROD_KEY", default=""),
+        "api_secret": env("HOTELBEDS_API_PROD_SECRET", default=""),
+        "base_url": env(
+            "HOTELBEDS_API_PROD_BASE_URL",
+            default="https://api.hotelbeds.com"  # Default production endpoint
+        ),
+    },
+}
+
 
 # OTP_SECRET = env("OTP_SECRET", default="JBSWY3DPEHPK3PXP")
 
@@ -532,9 +560,9 @@ SOCIALACCOUNT_PROVIDERS = {
         }
     },
     "facebook": {
+        "METHOD": "oauth2",
         "SCOPE": ["email", "public_profile"],
         "AUTH_PARAMS": {"auth_type": "reauthenticate"},
-        "METHOD": "oauth2",
         "APP": {
             "client_id": env("FACEBOOK_CLIENT_ID"),
             "secret": env("FACEBOOK_CLIENT_SECRET"),

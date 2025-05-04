@@ -1201,7 +1201,29 @@ class FacebookLoginView(SocialLoginView):
         },
     )
     def post(self, request, *args, **kwargs):
-        return super().post(request, *args, **kwargs)
+        response = super().post(request, *args, **kwargs)
+        if response.status_code == 200:
+            user = self.user
+            # Restrict if user has a usable password (normal registration)
+            if user.has_usable_password():
+                return Response(
+                    {
+                        "detail": "This account was created using email/password. Please log in using your credentials."
+                    },
+                    status=403
+                )
+            refresh = RefreshToken.for_user(user)
+            return Response({
+                "refresh": str(refresh),
+                "access": str(refresh.access_token),
+                "user":{
+                    "id": user.id,
+                    "email": user.email,
+                    "name": user.name
+                }
+
+            })
+        return response
 
 
 
@@ -1291,10 +1313,22 @@ class GoogleLoginView(SocialLoginView):
 
         if response.status_code == 200:
             user = self.user
+            if user.has_usable_password():
+                return Response(
+                    {
+                        "detail": "This account was created using email/password. Please log in using your credentials."
+                    },
+                    status=403
+            )
             refresh = RefreshToken.for_user(user)
             data = {
                 'refresh': str(refresh),
                 'access': str(refresh.access_token),
+                "user":{
+                    "id": user.id,
+                    "email": user.email,
+                    "name": user.name
+                }
             }
             return Response(data)
         return response
