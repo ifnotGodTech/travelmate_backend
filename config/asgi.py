@@ -15,9 +15,8 @@ from pathlib import Path
 
 from django.core.asgi import get_asgi_application
 from channels.routing import ProtocolTypeRouter, URLRouter
-from core.applications.chat.jwt_middleware import JWTMiddleware
 from channels.auth import AuthMiddlewareStack
-
+from core.applications.chat.jwt_middleware import JWTMiddleware
 
 # This allows easy placement of apps within the interior
 # travelmate_backend directory.
@@ -40,22 +39,21 @@ from core.applications.chat.routing import websocket_urlpatterns as chat_websock
 # Import any other existing routing from your websocket.py if needed
 from config.websocket import websocket_application as original_websocket_application
 
-# Create a ProtocolTypeRouter
+# Create a ProtocolTypeRouter with proper middleware stacking
 application = ProtocolTypeRouter({
     "http": django_application,
     "websocket": JWTMiddleware(
-        URLRouter(
-            chat_websocket_urlpatterns
-
+        AuthMiddlewareStack(
+            URLRouter(
+                chat_websocket_urlpatterns
+            )
         )
     ),
 })
 
-# If you need to maintain backward compatibility with your existing websocket handler
-# You can create a function that delegates to either the new channels-based routing
-# or your original websocket_application based on some condition
+# If you need to maintain backward compatibility with other WebSocket connections
+# Define a custom ASGI application that can route based on path
 async def backward_compatible_websocket(scope, receive, send):
-    # Check if the path is handled by channels
     path = scope["path"]
     if path.startswith("/ws/chat/"):
         # Let channels handle chat websockets
@@ -63,3 +61,6 @@ async def backward_compatible_websocket(scope, receive, send):
     else:
         # Use your original websocket handler for other websockets
         await original_websocket_application(scope, receive, send)
+
+# To use the backward_compatible_websocket function, replace the application definition with:
+# application = backward_compatible_websocket

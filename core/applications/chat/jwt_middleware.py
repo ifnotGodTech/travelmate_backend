@@ -2,6 +2,7 @@ from channels.db import database_sync_to_async
 from channels.middleware import BaseMiddleware
 from django.http import HttpRequest
 import logging
+import traceback
 
 logger = logging.getLogger(__name__)
 
@@ -9,6 +10,8 @@ class JWTMiddleware(BaseMiddleware):
     async def __call__(self, scope, receive, send):
         # Import here to avoid apps not loaded error
         from django.contrib.auth.models import AnonymousUser
+
+        logger.debug(f"JWT Middleware processing: {scope.get('path')}")
 
         # Extract token from query string
         query_string = scope.get("query_string", b"").decode()
@@ -19,19 +22,31 @@ class JWTMiddleware(BaseMiddleware):
                 break
 
         if token:
-            scope["user"] = await self.get_user(token, scope)
-            logger.debug(f"JWT authentication: Token={token[:10]}..., User={scope['user']}")
+            try:
+                scope["user"] = await self.get_user(token, scope)
+                logger.debug(f"JWT authentication: Token={token[:10]}..., User={scope['user']}, Path={scope.get('path')}")
+            except Exception as e:
+                logger.error(f"JWT middleware error: {str(e)}")
+                logger.error(traceback.format_exc())
+                scope["user"] = AnonymousUser()
         else:
             scope["user"] = AnonymousUser()
-            logger.warning("JWT authentication: No token provided")
+            logger.warning(f"JWT authentication: No token provided for path {scope.get('path')}")
 
-        return await super().__call__(scope, receive, send)
+        try:
+            return await super().__call__(scope, receive, send)
+        except Exception as e:
+            logger.error(f"Error in JWT middleware call: {str(e)}")
+            logger.error(traceback.format_exc())
+            raise
 
     @database_sync_to_async
     def get_user(self, token, scope):
         from django.contrib.auth.models import AnonymousUser
         from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
         from core.helpers.authentication import CustomJWTAuthentication
+
+        logger.debug(f"Authenticating token: {token[:10]}...")
 
         # Create a dummy request object
         dummy_request = HttpRequest()
@@ -56,7 +71,9 @@ class JWTMiddleware(BaseMiddleware):
         jwt_auth = CustomJWTAuthentication()
         try:
             validated_token = jwt_auth.get_validated_token(token)
-            return jwt_auth.get_user(validated_token, request=dummy_request)
+            user = jwt_auth.get_user(validated_token, request=dummy_request)
+            logger.debug(f"Authentication successful - User: {user.username if hasattr(user, 'username') else 'AnonymousUser'}")
+            return user
         except (InvalidToken, TokenError) as e:
             logger.error(f"JWT authentication: Invalid token - {str(e)}")
             return AnonymousUser()
