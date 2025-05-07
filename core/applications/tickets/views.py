@@ -208,7 +208,6 @@ class AdminTicketViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN
             )
 
-        # Check if escalation_level is in the request data
         if 'escalation_level' not in request.data:
             return Response(
                 {"detail": "escalation_level field is required"},
@@ -221,34 +220,30 @@ class AdminTicketViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Use the specific serializer for escalation
         serializer = TicketEscalateSerializer(ticket, data=request.data, partial=True)
 
         if serializer.is_valid():
-            # Save the updated ticket with escalation info
             ticket = serializer.save(escalated=True)
             ticket.save(update_fields=['escalated'])
 
-            # Verify escalation level was set
             if not ticket.escalation_level:
                 return Response(
                     {"detail": "Failed to set escalation level. Please check the escalation_level ID."},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # Import the Profile model
             from core.applications.users.models import Profile
 
-            # Get the user's profile to access first_name and last_name
             try:
                 user_profile = Profile.objects.get(user=ticket.user)
-                user_first_name = user_profile.first_name
-                user_last_name = user_profile.last_name
+                user_first_name = user_profile.first_name or "Unknown"
+                user_last_name = user_profile.last_name or "Customer"
+                user_mobile_number = user_profile.mobile_number or "Not Provided"
             except Profile.DoesNotExist:
                 user_first_name = "Unknown"
                 user_last_name = "Customer"
+                user_mobile_number = "Not Provided"
 
-            # Email body content
             subject_prefix = getattr(settings, 'EMAIL_SUBJECT_PREFIX', '[Ticket System] ')
             subject = f'{subject_prefix}Ticket #{ticket.id} Escalated: {ticket.title}'
 
@@ -260,20 +255,18 @@ class AdminTicketViewSet(viewsets.ModelViewSet):
             Category: {ticket.category}
             Customer: {user_first_name} {user_last_name}
             Email: {ticket.user.email}
+            Mobile Number: {user_mobile_number}
 
             Escalation Level: {ticket.escalation_level.name}
             Reason: {ticket.escalation_reason}
             """
 
-            # Add response time if available
             if ticket.escalation_response_time:
                 message += f"\nResponse Time: {dict(ticket.RESPONSE_TIME_CHOICES)[ticket.escalation_response_time]}"
 
-            # Add note if available
             if ticket.escalation_note:
                 message += f"\nNote: {ticket.escalation_note}"
 
-            # Send email notification
             from_email = settings.DEFAULT_FROM_EMAIL
             recipient_email = ticket.escalation_level.email
 
@@ -293,7 +286,6 @@ class AdminTicketViewSet(viewsets.ModelViewSet):
                 import logging
                 logger = logging.getLogger(__name__)
                 logger.error(f"Email notification failed: {str(e)}")
-
                 return Response(
                     {"detail": f"Ticket escalated but email notification failed: {str(e)}"},
                     status=status.HTTP_200_OK

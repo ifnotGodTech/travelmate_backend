@@ -80,6 +80,6 @@ class Profile(models.Model):
 
     @property
     def get_profile_picture(self):
-        if self.profile_picture:
-            return self.profile_picture.url
+        if self.profile_pics:  # Changed from self.profile_picture to self.profile_pics
+            return self.profile_pics.url
         return f'{settings.STATIC_URL}images/avatar.png'

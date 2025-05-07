@@ -10,17 +10,18 @@ User = get_user_model()
 class UserProfileSerializer(serializers.ModelSerializer):
     first_name = serializers.SerializerMethodField()
     last_name = serializers.SerializerMethodField()
+    mobile_number = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ('id', 'email', 'first_name', 'last_name')
+        fields = ('id', 'email', 'first_name', 'last_name', 'mobile_number')
 
     @extend_schema_field(str)
     def get_first_name(self, user):
         try:
             from core.applications.users.models import Profile
             profile = Profile.objects.get(user=user)
-            return profile.first_name
+            return profile.first_name or ""
         except:
             return ""
 
@@ -29,7 +30,16 @@ class UserProfileSerializer(serializers.ModelSerializer):
         try:
             from core.applications.users.models import Profile
             profile = Profile.objects.get(user=user)
-            return profile.last_name
+            return profile.last_name or ""
+        except:
+            return ""
+
+    @extend_schema_field(str)
+    def get_mobile_number(self, user):
+        try:
+            from core.applications.users.models import Profile
+            profile = Profile.objects.get(user=user)
+            return profile.mobile_number or ""
         except:
             return ""
 
@@ -61,12 +71,14 @@ class TicketSerializer(serializers.ModelSerializer):
         read_only_fields = ('id', 'ticket_id', 'created_at', 'updated_at', 'escalated')
 
     def get_priority(self, obj):
+        if not obj.escalated or not obj.escalation_response_time:
+            return "Not Stated"
         mapping = {
             '1hr': 'High',
             '4hrs': 'Medium',
             '24hrs': 'Low',
         }
-        return mapping.get(obj.escalation_response_time, None)
+        return mapping.get(obj.escalation_response_time, "Not Stated")
 
 class TicketCreateSerializer(serializers.ModelSerializer):
     class Meta:
@@ -153,7 +165,6 @@ class EscalationLevelStatsSerializer(serializers.Serializer):
     total = serializers.IntegerField()
     pending = serializers.IntegerField()
     resolved = serializers.IntegerField()
-
 
 class TicketNotificationSerializer(serializers.ModelSerializer):
     ticket = TicketSerializer(read_only=True)
