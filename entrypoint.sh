@@ -6,7 +6,8 @@ python manage.py spectacular --color --file schema.yml
 python manage.py migrate
 # exec /usr/local/bin/gunicorn config.asgi --bind 0.0.0.0:5000 --chdir=/app -k uvicorn.workers.UvicornWorker
 # exec python manage.py startpublishing
-exec python manage.py runserver 0.0.0.0:5000
+# exec python manage.py runserver 0.0.0.0:5000
+exec uvicorn config.asgi:application --host 0.0.0.0 --port $PORT
 # exec daphne -b 0.0.0.0 -p 8000 --ws-protocol "graphql-ws" --proxy-headers my_project.asgi:channel_layer
 # exec python manage.py runworker --only-channels=http.* --only-channels=websocket.*
 # exec daphne -b 0.0.0.0 -p 5000  --proxy-headers config.asgi:application
