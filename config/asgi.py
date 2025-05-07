@@ -27,6 +27,10 @@ sys.path.append(str(BASE_DIR / "travelmate_backend"))
 # If DJANGO_SETTINGS_MODULE is unset, default to the local settings
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.local")
 
+import logging
+logger = logging.getLogger(__name__)
+logger.info(f"Using settings module: {os.environ['DJANGO_SETTINGS_MODULE']}")
+
 # This application object is used by any ASGI server configured to use this file.
 django_application = get_asgi_application()
 

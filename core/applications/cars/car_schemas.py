@@ -179,7 +179,8 @@ transfer_search_schema = extend_schema_view(
                     'end_geo_lat': 48.859466,
                     'end_geo_long': 2.2976965,
                     'price_min': 50,
-                    'price_max': 150
+                    'price_max': 150,
+                    'passengers': 2
                 },
                 description='Transfer search from Charles de Gaulle to Eiffel Tower with price range'
             )

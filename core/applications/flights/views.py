@@ -386,22 +386,34 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
             if 'error' in payment_result:
                 return False, payment_result['error']
 
+            payment_intent_id = payment_result.get('payment_intent_id')
+            client_secret = payment_result.get('client_secret')
             payment_split = payment_result.get('payment_split', {})
 
-            # Check if payment exists first
-            payment, created = PaymentDetail.objects.update_or_create(
-                booking=flight_booking.booking,  # Reference the base booking model
+            # Check PaymentIntent status
+            payment_intent = stripe.PaymentIntent.retrieve(payment_intent_id)
+            if payment_intent.status == 'requires_action':
+                # Return client_secret for frontend to handle 3D Secure
+                return False, {
+                    'requires_action': True,
+                    'payment_intent_client_secret': client_secret,
+                    'payment_intent_id': payment_intent_id
+                }
+
+            # Create payment record if payment is successful
+            PaymentDetail.objects.update_or_create(
+                booking=flight_booking.booking,
                 defaults={
                     'amount': float(payment_split.get('total_price', flight_booking.booking.total_price)),
                     'currency': flight_booking.currency,
                     'payment_method': 'STRIPE',
-                    'transaction_id': payment_result.get('payment_intent_id'),
+                    'transaction_id': payment_intent_id,
                     'payment_status': 'COMPLETED',
                     'payment_date': timezone.now(),
                     'additional_details': {
                         'flight_cost': float(payment_split.get('flight_cost', 0)),
                         'service_fee': float(payment_split.get('service_fee', 0)),
-                        'payment_intent_id': payment_result.get('payment_intent_id')
+                        'payment_intent_id': payment_intent_id
                     }
                 }
             )
