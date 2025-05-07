@@ -185,7 +185,8 @@ flight_booking_schema = extend_schema_view(
                 name="id",
                 type=OpenApiTypes.INT,
                 location=OpenApiParameter.PATH,
-                description="""A unique integer value identifying the flight booking. Note that this is the booking ID, not the flight offer ID. The booking ID is generated when the booking is created."""
+                description="""The ID of the created booking to process payment for.
+                The booking must be in a pending state."""
             )
         ],
         examples=[
