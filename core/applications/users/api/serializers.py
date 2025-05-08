@@ -662,12 +662,16 @@ class AdminUserSerializer(serializers.ModelSerializer):
     last_name = serializers.CharField(source="profile.last_name", read_only=True)
     date_created = serializers.DateTimeField(source="date_joined", format="%Y-%m-%d", read_only=True)
     total_bookings = serializers.IntegerField(read_only=True)
+    address = serializers.SerializerMethodField(source="profile.address", read_only=True)
+    mobile_number = serializers.CharField(source="profile.mobile_number", read_only=True)
+    name = serializers.CharField(source="get_full_name", read_only=True)
 
     class Meta:
         model = User
         fields = (
             "id", "email", "first_name", "last_name", "name",
-            "profile_picture", "date_created", "total_bookings"
+            "profile_picture", "date_created", "total_bookings",
+            "address", "mobile_number"
         )
 
     @extend_schema_field(str)
@@ -686,6 +690,13 @@ class AdminUserSerializer(serializers.ModelSerializer):
         """Retrieve the last name from the profile model, handle if profile doesn't exist."""
         return obj.profile.last_name if hasattr(obj, "profile") and obj.profile else ""
 
+    def get_address(self, obj):
+        """Retrieve the address from the profile model, handle if profile doesn't exist."""
+        return obj.profile.address if hasattr(obj, "profile") and obj.profile else ""
+
+    def get_mobile_number(self, obj):
+        """Retrieve the mobile number from the profile model, handle if profile doesn't exist."""
+        return obj.profile.mobile_number if hasattr(obj, "profile") and obj.profile else ""
 
 class AdminUserDetailSerializer(AdminUserSerializer):
     """
