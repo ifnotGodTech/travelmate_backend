@@ -8,18 +8,122 @@ from core.applications.stay.models import Booking
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAdminUser
-from .schemas import apply_unified_booking_schema
+from rest_framework.permissions import IsAdminUser, IsAuthenticated
+from .schemas import apply_unified_booking_schema, apply_user_booking_schema
 from django.utils import timezone
 import stripe
 from django.conf import settings
 from drf_spectacular.utils import extend_schema, OpenApiParameter, extend_schema_view
 from drf_spectacular.types import OpenApiTypes
+from rest_framework.permissions import BasePermission
 
 from core.applications.flights.models import Flight, FlightBooking, PassengerBooking, PaymentDetail
 from core.applications.cars.models import CarBooking, Payment, StatusHistory
 
+class IsAdminOrSelf(BasePermission):
+    """
+    Custom permission to only allow admins or the user themselves to access their bookings
+    """
+    def has_permission(self, request, view):
+        # Admin can access all
+        if request.user.is_staff:
+            return True
 
+        # Regular users can only access their own bookings
+        user_id = request.query_params.get('user_id')
+        return user_id and str(request.user.id) == str(user_id)
+
+@apply_user_booking_schema
+class UserBookingViewSet(viewsets.ViewSet):
+    """
+    ViewSet for retrieving user-specific bookings with proper permissions
+    """
+    permission_classes = [IsAuthenticated, IsAdminOrSelf]
+
+    def list(self, request):
+        """
+        List bookings for a specific user with filtering options
+        """
+        user_id = request.query_params.get('user_id')
+        booking_type = request.query_params.get('type')
+        status_filter = request.query_params.get('status')
+
+        if not user_id:
+            return Response(
+                {"error": "user_id parameter is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Base query for user's bookings
+        bookings = Booking.objects.filter(user_id=user_id).order_by('-created_at')
+
+        # Apply status filter if provided
+        if status_filter:
+            bookings = bookings.filter(status=status_filter)
+
+        result = []
+        for booking in bookings:
+            # Determine booking type and get specific booking object
+            booking_data = {
+                'id': booking.id,
+                'created_at': booking.created_at,
+                'status': booking.status,
+                'total_amount': None,
+                'booking_type': None,
+                'specific_id': None,
+                'details': {},
+            }
+
+            # Check if it's a car booking
+            try:
+                car_booking = CarBooking.objects.get(booking=booking)
+                if booking_type and booking_type.lower() != 'car':
+                    continue
+
+                booking_data['booking_type'] = 'car'
+                booking_data['specific_id'] = car_booking.id
+                booking_data['details'] = {
+                    'pickup_date': car_booking.pickup_date,
+                    'dropoff_date': car_booking.dropoff_date,
+                    'car_model': car_booking.car.model if car_booking.car else 'N/A',
+                }
+                payment = Payment.objects.filter(booking=booking, status='COMPLETED').first()
+                if payment:
+                    booking_data['total_amount'] = payment.amount
+
+                result.append(booking_data)
+                continue
+            except CarBooking.DoesNotExist:
+                pass
+
+            # Check if it's a flight booking
+            try:
+                flight_booking = FlightBooking.objects.get(booking=booking)
+                if booking_type and booking_type.lower() != 'flight':
+                    continue
+
+                booking_data['booking_type'] = 'flight'
+                booking_data['specific_id'] = flight_booking.id
+
+                # Get first flight for summary
+                first_flight = Flight.objects.filter(flight_booking=flight_booking).order_by('departure_datetime').first()
+                if first_flight:
+                    booking_data['details'] = {
+                        'departure': first_flight.departure_airport,
+                        'arrival': first_flight.arrival_airport,
+                        'departure_date': first_flight.departure_datetime.date(),
+                        'flight_number': f"{first_flight.airline_code}{first_flight.flight_number}",
+                    }
+
+                payment = PaymentDetail.objects.filter(booking=booking, payment_status='COMPLETED').first()
+                if payment:
+                    booking_data['total_amount'] = payment.amount
+
+                result.append(booking_data)
+            except FlightBooking.DoesNotExist:
+                pass
+
+        return Response(result, status=status.HTTP_200_OK)
 
 @extend_schema_view(
     list=extend_schema(

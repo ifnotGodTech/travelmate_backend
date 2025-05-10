@@ -1,4 +1,3 @@
-# core/applications/tickets/views.py
 from rest_framework import viewsets, permissions, status, generics
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -434,7 +433,7 @@ class NotificationViewSet(viewsets.ModelViewSet):
     """ViewSet for handling user notifications"""
     serializer_class = TicketNotificationSerializer
     permission_classes = [permissions.IsAuthenticated]
-    http_method_names = ['get']  # Only allow GET and POST methods
+    http_method_names = ['get']  # Only allow GET methods
 
     def get_queryset(self):
         return TicketNotification.objects.filter(user=self.request.user).order_by('-created_at')
