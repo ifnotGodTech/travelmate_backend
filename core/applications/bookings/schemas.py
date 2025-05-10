@@ -102,6 +102,111 @@ update_success_serializer = inline_serializer(
     }
 )
 
+# User booking list response serializer
+user_booking_list_serializer = inline_serializer(
+    name="UserBookingListResponse",
+    fields={
+        "id": serializers.IntegerField(),
+        "created_at": serializers.DateTimeField(),
+        "status": serializers.CharField(),
+        "total_amount": serializers.DecimalField(max_digits=10, decimal_places=2, allow_null=True),
+        "booking_type": serializers.CharField(),
+        "specific_id": serializers.IntegerField(allow_null=True),
+        "details": serializers.DictField(),
+    }
+)
+
+# User booking schema
+user_booking_schema = {
+    'list': extend_schema(
+        summary="List user bookings",
+        description="List bookings for a specific user with filtering options for booking type and status",
+        parameters=[
+            OpenApiParameter(
+                name="user_id",
+                type=OpenApiTypes.INT,
+                description="ID of the user whose bookings to retrieve",
+                required=True
+            ),
+            OpenApiParameter(
+                name="type",
+                type=OpenApiTypes.STR,
+                description="Filter by booking type: 'car' or 'flight'",
+                required=False,
+                enum=["car", "flight"]
+            ),
+            OpenApiParameter(
+                name="status",
+                type=OpenApiTypes.STR,
+                description="Filter by booking status",
+                required=False,
+                examples=[
+                    OpenApiExample(
+                        "Confirmed",
+                        value="CONFIRMED"
+                    ),
+                    OpenApiExample(
+                        "Cancelled",
+                        value="CANCELLED"
+                    ),
+                    OpenApiExample(
+                        "Pending",
+                        value="PENDING"
+                    ),
+                ]
+            )
+        ],
+        responses={
+            200: OpenApiResponse(
+                description="List of user's bookings",
+                response=user_booking_list_serializer,
+                examples=[
+                    OpenApiExample(
+                        "User Bookings Example",
+                        value=[
+                            {
+                                "id": 123,
+                                "created_at": "2023-10-15T14:30:00Z",
+                                "status": "CONFIRMED",
+                                "total_amount": 149.99,
+                                "booking_type": "car",
+                                "specific_id": 456,
+                                "details": {
+                                    "pickup_date": "2023-11-01",
+                                    "dropoff_date": "2023-11-05",
+                                    "car_model": "Toyota Corolla"
+                                }
+                            },
+                            {
+                                "id": 124,
+                                "created_at": "2023-10-16T10:15:00Z",
+                                "status": "CONFIRMED",
+                                "total_amount": 523.50,
+                                "booking_type": "flight",
+                                "specific_id": 789,
+                                "details": {
+                                    "departure": "JFK",
+                                    "arrival": "LAX",
+                                    "departure_date": "2023-12-15",
+                                    "flight_number": "AA123"
+                                }
+                            }
+                        ]
+                    )
+                ]
+            ),
+            400: invalid_request_response,
+            403: OpenApiResponse(
+                description="Permission denied - user can only access their own bookings",
+                response=inline_serializer(
+                    name="PermissionDeniedError",
+                    fields={"error": serializers.CharField()}
+                )
+            )
+        },
+        tags=["User Bookings"]
+    )
+}
 
 # Schema extensions for UnifiedBookingAdminViewSet
 unified_booking_schema = {
@@ -339,9 +444,14 @@ unified_booking_schema = {
     )
 }
 
-
 def apply_unified_booking_schema(cls):
     """
     Decorator to apply all schema definitions to the UnifiedBookingAdminViewSet
     """
     return extend_schema_view(**unified_booking_schema)(cls)
+
+def apply_user_booking_schema(cls):
+    """
+    Decorator to apply the user booking schema to a viewset
+    """
+    return extend_schema_view(**user_booking_schema)(cls)
