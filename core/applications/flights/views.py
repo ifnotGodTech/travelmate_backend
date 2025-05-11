@@ -194,7 +194,7 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
                         itinerary_index=itinerary_idx,
                         flight_number=segment.get('number'),
                         airline_code=segment.get('carrierCode'),
-                        operating_airline=segment.get('operating', {}).get('carrierCode'),
+                        operating_airline=segment.get('operating', {}).get('carrierCode') or segment.get('carrierCode'),
                         departure_airport=segment.get('departure', {}).get('iataCode'),
                         departure_terminal=segment.get('departure', {}).get('terminal', ''),
                         departure_city=segment.get('departure', {}).get('city', ''),
