@@ -209,3 +209,26 @@ class Payment(models.Model):
     )
     refund_date = models.DateTimeField(null=True, blank=True)
     refund_reason = models.TextField(blank=True, null=True)
+
+
+class CarSearch(models.Model):
+    """
+    Model for tracking car searches
+    """
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    pickup_location = models.ForeignKey(Location, on_delete=models.CASCADE, related_name='search_pickups')
+    dropoff_location = models.ForeignKey(Location, on_delete=models.CASCADE, related_name='search_dropoffs')
+    pickup_date = models.DateField()
+    dropoff_date = models.DateField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    passengers = models.IntegerField(default=1)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['pickup_location', 'dropoff_location']),
+            models.Index(fields=['created_at']),
+        ]
+
+    def __str__(self):
+        return f"Search: {self.pickup_location} to {self.dropoff_location} on {self.pickup_date}"

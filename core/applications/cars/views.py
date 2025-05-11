@@ -13,12 +13,15 @@ import stripe
 from django.conf import settings
 from rest_framework.exceptions import APIException
 from django.db import transaction
+from rest_framework.views import APIView
+from rest_framework.permissions import IsAuthenticated, AllowAny
+from django.db import models
 
 from .utils import AmadeusService
-from .models import CarBooking, Location, Car, Booking, Payment, CarCategory, CarCompany, StatusHistory, CarServiceFee
+from .models import CarBooking, Location, Car, Booking, Payment, CarCategory, CarCompany, StatusHistory, CarServiceFee, CarSearch
 from .serializers import (
     CarBookingSerializer, LocationSerializer, CarSerializer,
-    PaymentSerializer, CarCategorySerializer, CarCompanySerializer, CarServiceFeeSerializer, TransferSearchSerializer
+    PaymentSerializer, CarCategorySerializer, CarCompanySerializer, CarServiceFeeSerializer, TransferSearchSerializer, CarSearchSerializer
 )
 
 from .car_schemas import (
@@ -27,7 +30,9 @@ from .car_schemas import (
     car_company_schema,
     transfer_search_schema,
     car_booking_schema,
-    payment_schema
+    payment_schema,
+    recent_searches_schema,
+    popular_destinations_schema
 )
 
 from django.core.cache import cache
@@ -981,3 +986,77 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 detail="An unexpected error occurred while processing refund",
                 code=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+@recent_searches_schema
+class RecentSearchesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        """
+        Get recent car searches for the authenticated user
+        """
+        searches = CarSearch.objects.filter(user=request.user)[:10]
+        serializer = CarSearchSerializer(searches, many=True)
+        return Response(serializer.data)
+
+
+@popular_destinations_schema
+class PopularDestinationsView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        """
+        Get most popular destinations based on search frequency
+        """
+        # Get the last 30 days of searches
+        thirty_days_ago = timezone.now() - timezone.timedelta(days=30)
+
+        # Get top 10 most searched pickup locations
+        popular_pickups = CarSearch.objects.filter(
+            created_at__gte=thirty_days_ago
+        ).values('pickup_location').annotate(
+            search_count=models.Count('id')
+        ).order_by('-search_count')[:10]
+
+        # Get top 10 most searched dropoff locations
+        popular_dropoffs = CarSearch.objects.filter(
+            created_at__gte=thirty_days_ago
+        ).values('dropoff_location').annotate(
+            search_count=models.Count('id')
+        ).order_by('-search_count')[:10]
+
+        # Get location details
+        pickup_locations = Location.objects.filter(
+            id__in=[item['pickup_location'] for item in popular_pickups]
+        )
+        dropoff_locations = Location.objects.filter(
+            id__in=[item['dropoff_location'] for item in popular_dropoffs]
+        )
+
+        # Create response with search counts
+        response = {
+            'popular_pickup_locations': [
+                {
+                    'location': LocationSerializer(loc).data,
+                    'search_count': next(
+                        item['search_count']
+                        for item in popular_pickups
+                        if item['pickup_location'] == loc.id
+                    )
+                }
+                for loc in pickup_locations
+            ],
+            'popular_dropoff_locations': [
+                {
+                    'location': LocationSerializer(loc).data,
+                    'search_count': next(
+                        item['search_count']
+                        for item in popular_dropoffs
+                        if item['dropoff_location'] == loc.id
+                    )
+                }
+                for loc in dropoff_locations
+            ]
+        }
+
+        return Response(response)
