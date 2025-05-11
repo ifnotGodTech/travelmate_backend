@@ -1189,3 +1189,133 @@ class UnifiedBookingAdminViewSet(viewsets.ViewSet):
         response = HttpResponse(buffer, content_type='application/pdf')
         response['Content-Disposition'] = f'attachment; filename="bookings_{user_id}_{datetime.now().strftime("%Y%m%d")}.pdf"'
         return response
+
+    @action(detail=True, methods=['get'])
+    def export_pdf(self, request, pk=None):
+        """
+        Export a single booking as PDF (Admin only)
+        """
+        try:
+            booking = Booking.objects.get(pk=pk)
+            booking_type = self._determine_booking_type(booking)
+
+            # Create PDF
+            buffer = BytesIO()
+            doc = SimpleDocTemplate(buffer, pagesize=letter)
+            styles = getSampleStyleSheet()
+            elements = []
+
+            # Add title
+            title_style = ParagraphStyle(
+                'CustomTitle',
+                parent=styles['Heading1'],
+                fontSize=16,
+                spaceAfter=30
+            )
+            elements.append(Paragraph(f"Booking Details - #{booking.id}", title_style))
+            elements.append(Paragraph(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']))
+            elements.append(Spacer(1, 20))
+
+            # Add booking details
+            details_data = [
+                ['Booking ID', str(booking.id)],
+                ['Status', booking.status],
+                ['Created At', booking.created_at.strftime('%Y-%m-%d %H:%M')],
+                ['Type', booking_type.capitalize() if booking_type else 'Unknown'],
+                ['User', f"{booking.user.get_full_name()} ({booking.user.email})"]
+            ]
+
+            # Add type-specific details
+            if booking_type == 'car':
+                car_booking = CarBooking.objects.get(booking=booking)
+                details_data.extend([
+                    ['Pickup Date', car_booking.pickup_date.strftime('%Y-%m-%d')],
+                    ['Dropoff Date', car_booking.dropoff_date.strftime('%Y-%m-%d')],
+                    ['Car Model', car_booking.car.model if car_booking.car else 'N/A'],
+                    ['Pickup Location', car_booking.pickup_location.name if car_booking.pickup_location else 'N/A'],
+                    ['Dropoff Location', car_booking.dropoff_location.name if car_booking.dropoff_location else 'N/A'],
+                ])
+                payment = Payment.objects.filter(booking=booking, status='COMPLETED').first()
+                if payment:
+                    details_data.append(['Total Amount', f"${payment.amount:.2f}"])
+            elif booking_type == 'flight':
+                flight_booking = FlightBooking.objects.get(booking=booking)
+                first_flight = Flight.objects.filter(flight_booking=flight_booking).order_by('departure_datetime').first()
+                if first_flight:
+                    details_data.extend([
+                        ['Departure', first_flight.departure_airport],
+                        ['Arrival', first_flight.arrival_airport],
+                        ['Flight Number', f"{first_flight.airline_code}{first_flight.flight_number}"],
+                        ['Departure Date', first_flight.departure_datetime.strftime('%Y-%m-%d %H:%M')],
+                    ])
+                payment = PaymentDetail.objects.filter(booking=booking, payment_status='COMPLETED').first()
+                if payment:
+                    details_data.append(['Total Amount', f"${payment.amount:.2f}"])
+
+            # Create details table
+            details_table = Table(details_data, colWidths=[2*inch, 4*inch])
+            details_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (0, -1), colors.lightgrey),
+                ('TEXTCOLOR', (0, 0), (0, -1), colors.black),
+                ('ALIGN', (0, 0), (0, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (0, -1), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
+                ('BACKGROUND', (1, 0), (1, -1), colors.white),
+                ('TEXTCOLOR', (1, 0), (1, -1), colors.black),
+                ('FONTNAME', (1, 0), (1, -1), 'Helvetica'),
+                ('FONTSIZE', (1, 0), (1, -1), 10),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ]))
+
+            elements.append(details_table)
+            elements.append(Spacer(1, 20))
+
+            # Add history section
+            elements.append(Paragraph("Booking History", styles['Heading2']))
+            elements.append(Spacer(1, 10))
+
+            history_entries = BookingHistory.objects.filter(booking=booking).order_by('-changed_at')
+            history_data = [['Date', 'Status', 'Notes']]
+
+            for entry in history_entries:
+                history_data.append([
+                    entry.changed_at.strftime('%Y-%m-%d %H:%M'),
+                    entry.status,
+                    entry.notes or 'N/A'
+                ])
+
+            # Create history table
+            history_table = Table(history_data, colWidths=[1.5*inch, 1.5*inch, 3*inch])
+            history_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
+                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 1), (-1, -1), 9),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ]))
+
+            elements.append(history_table)
+            doc.build(elements)
+
+            # Prepare response
+            buffer.seek(0)
+            response = HttpResponse(buffer, content_type='application/pdf')
+            response['Content-Disposition'] = f'attachment; filename="booking_{booking.id}_{datetime.now().strftime("%Y%m%d")}.pdf"'
+            return response
+
+        except Booking.DoesNotExist:
+            return Response(
+                {"error": "Booking not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )

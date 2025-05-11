@@ -491,7 +491,29 @@ unified_booking_schema = {
             404: booking_not_found_response
         },
         tags=["Admin Bookings"]
-    )
+    ),
+
+    'export_pdf': extend_schema(
+        summary="Export booking as PDF",
+        description="Generate and download a PDF document containing the booking details and history (Admin only)",
+        parameters=[
+            OpenApiParameter(
+                name='pk',
+                description='Booking ID to export',
+                required=True,
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.PATH
+            )
+        ],
+        responses={
+            200: OpenApiResponse(
+                description="PDF file containing booking details",
+                response=OpenApiTypes.BINARY
+            ),
+            404: booking_not_found_response
+        },
+        tags=["Admin Bookings"]
+    ),
 }
 
 def apply_unified_booking_schema(cls):
