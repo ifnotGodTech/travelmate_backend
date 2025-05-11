@@ -6,6 +6,13 @@ from django.db import models
 from django.conf import settings
 from datetime import timedelta
 from django.utils import timezone
+from io import BytesIO
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from django.http import HttpResponse
 from .models import Ticket, Message, EscalationLevel, TicketNotification
 from .serializers import (
     TicketNotificationSerializer, TicketSerializer, MessageSerializer, TicketCreateSerializer,
@@ -35,7 +42,7 @@ from .schema import (
     admin_ticket_escalation_level_stats_schema, admin_ticket_average_response_time_schema,notification_count_schema,notification_mark_all_read_schema,
     notification_mark_read_schema, notification_list_schema,
     notification_retrieve_schema, admin_notification_list_schema,
-    admin_notification_stats_schema
+    admin_notification_stats_schema, ticket_export_pdf_schema
 )
 
 class IsAdminOrOwner(permissions.BasePermission):
@@ -318,7 +325,8 @@ class AdminTicketViewSet(viewsets.ModelViewSet):
     partial_update=ticket_partial_update_schema,
     destroy=ticket_destroy_schema,
     pending=ticket_pending_schema,
-    resolved=ticket_resolved_schema
+    resolved=ticket_resolved_schema,
+    export_pdf=ticket_export_pdf_schema
 )
 class TicketViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, IsAdminOrOwner]
@@ -358,6 +366,88 @@ class TicketViewSet(viewsets.ModelViewSet):
             is_read=False
         ).count()
         return Response({'unread_count': count})
+
+    @action(detail=True, methods=['get'])
+    def export_pdf(self, request, pk=None):
+        """
+        Export ticket details and messages as a PDF document.
+        """
+        ticket = self.get_object()
+
+        # Create a BytesIO buffer to store the PDF
+        buffer = BytesIO()
+
+        # Create the PDF document
+        doc = SimpleDocTemplate(buffer, pagesize=letter)
+        styles = getSampleStyleSheet()
+        elements = []
+
+        # Add title
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=16,
+            spaceAfter=30
+        )
+        elements.append(Paragraph(f"Ticket #{ticket.ticket_id}: {ticket.title}", title_style))
+        elements.append(Spacer(1, 12))
+
+        # Add ticket details
+        details_style = styles['Normal']
+        details = [
+            f"Category: {ticket.category}",
+            f"Status: {ticket.status}",
+            f"Created: {ticket.created_at.strftime('%Y-%m-%d %H:%M:%S')}",
+            f"Last Updated: {ticket.updated_at.strftime('%Y-%m-%d %H:%M:%S')}"
+        ]
+
+        if ticket.escalated:
+            details.extend([
+                f"Escalated: Yes",
+                f"Escalation Level: {ticket.escalation_level.name if ticket.escalation_level else 'N/A'}",
+                f"Escalation Reason: {ticket.escalation_reason or 'N/A'}",
+                f"Response Time: {ticket.escalation_response_time or 'N/A'}"
+            ])
+
+        for detail in details:
+            elements.append(Paragraph(detail, details_style))
+            elements.append(Spacer(1, 6))
+
+        elements.append(Spacer(1, 20))
+
+        # Add description
+        elements.append(Paragraph("Description:", styles['Heading2']))
+        elements.append(Paragraph(ticket.description, details_style))
+        elements.append(Spacer(1, 20))
+
+        # Add messages
+        elements.append(Paragraph("Messages:", styles['Heading2']))
+        messages = ticket.messages.all().order_by('timestamp')
+
+        if messages:
+            for message in messages:
+                elements.append(Spacer(1, 12))
+                elements.append(Paragraph(
+                    f"From: {message.sender.email} - {message.timestamp.strftime('%Y-%m-%d %H:%M:%S')}",
+                    styles['Heading3']
+                ))
+                elements.append(Paragraph(message.content, details_style))
+        else:
+            elements.append(Paragraph("No messages found.", details_style))
+
+        # Build the PDF
+        doc.build(elements)
+
+        # Get the value of the BytesIO buffer
+        pdf = buffer.getvalue()
+        buffer.close()
+
+        # Create the HTTP response
+        response = HttpResponse(content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="ticket_{ticket.ticket_id}.pdf"'
+        response.write(pdf)
+
+        return response
 
 @extend_schema_view(
     get=message_list_schema,

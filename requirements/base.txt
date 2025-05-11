@@ -56,7 +56,7 @@ ulid-py==1.1.0 # https://github.com/ahawker/ulid
 python-bidi==0.4.2  # https://github.com/MeirKriheli/python-bidi
 django-unfold==0.33.0  # https://unfoldadmin.com/
 django-simple-history==3.7.0  # https://django-simple-history.readthedocs.io/en/stable/
-reportlab==4.0.9  # https://github.com/reportlab/reportlab
+reportlab==4.0.9  # For PDF generation
 
 django-auto-prefetch==1.9.0
 amadeus #==12.0.0  #https://developers.amadeus.com/self-service/apis-docs/guides/developer-guides/developer-tools/python/#installation

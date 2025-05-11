@@ -1312,3 +1312,26 @@ admin_notification_stats_schema = extend_schema(
     },
     tags=["Admin Ticket Notifications"]
 )
+
+ticket_export_pdf_schema = extend_schema(
+    summary="Export ticket as PDF",
+    description="Generate and download a PDF document containing the ticket details and messages.",
+    parameters=[
+        OpenApiParameter(
+            name="id",
+            type=OpenApiTypes.INT,
+            location=OpenApiParameter.PATH,
+            description="A unique integer value identifying the ticket."
+        )
+    ],
+    responses={
+        200: OpenApiResponse(
+            description="PDF file containing ticket details",
+            response=OpenApiTypes.BINARY
+        ),
+        401: OpenApiResponse(description="Authentication credentials were not provided."),
+        403: OpenApiResponse(description="You do not have permission to access this ticket."),
+        404: OpenApiResponse(description="Ticket not found.")
+    },
+    tags=["User Tickets"]
+)

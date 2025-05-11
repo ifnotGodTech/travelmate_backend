@@ -11,6 +11,7 @@ router.register(r'api/user/chats', views.UserChatSessionViewSet, basename='user-
 router.register(r'api/admin/chats', views.AdminChatSessionViewSet, basename='admin-chat')
 # Common routes
 router.register(r'api/chat/messages', views.ChatMessageViewSet, basename='chat-message')
+router.register(r'api/chat/admins', views.AdminListViewSet, basename='admin-list')
 
 urlpatterns = [
     path('', include(router.urls)),
