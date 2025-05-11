@@ -3,10 +3,18 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.db.models import Q, Count, Max, F, Value, BooleanField
 from django.db.models.functions import Coalesce
-from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiParameter
+from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiParameter, OpenApiResponse
 from drf_spectacular.types import OpenApiTypes
+from django.http import HttpResponse
+from io import BytesIO
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
 from .models import ChatSession, ChatMessage
-from .serializers import ChatSessionSerializer, ChatSessionDetailSerializer, ChatMessageSerializer
+from .serializers import ChatSessionSerializer, ChatSessionDetailSerializer, ChatMessageSerializer, UserSerializer
+from core.applications.users.models import User
 
 
 class IsAdminUser(permissions.BasePermission):
@@ -80,6 +88,89 @@ class UserChatSessionViewSet(mixins.ListModelMixin,
             is_read=False
         ).update(is_read=True)
         return Response({'status': 'messages marked as read'})
+
+    @extend_schema(
+        summary="Export chat session as PDF",
+        description="Generate and download a PDF document containing the chat session details and messages",
+        responses={
+            200: OpenApiResponse(
+                description="PDF file containing chat session details",
+                response=OpenApiTypes.BINARY
+            )
+        },
+        tags=["Chat User API"]
+    )
+    @action(detail=True, methods=['get'])
+    def export_pdf(self, request, pk=None):
+        """
+        Export chat session details and messages as a PDF document.
+        """
+        session = self.get_object()
+
+        # Create a BytesIO buffer to store the PDF
+        buffer = BytesIO()
+
+        # Create the PDF document
+        doc = SimpleDocTemplate(buffer, pagesize=letter)
+        styles = getSampleStyleSheet()
+        elements = []
+
+        # Add title
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=16,
+            spaceAfter=30
+        )
+        elements.append(Paragraph(f"Chat Session #{session.id}: {session.title}", title_style))
+        elements.append(Spacer(1, 12))
+
+        # Add session details
+        details_style = styles['Normal']
+        details = [
+            f"Status: {session.status}",
+            f"Created: {session.created_at.strftime('%Y-%m-%d %H:%M:%S')}",
+            f"Last Updated: {session.updated_at.strftime('%Y-%m-%d %H:%M:%S')}"
+        ]
+
+        if session.assigned_admin:
+            details.append(f"Assigned Admin: {session.assigned_admin.email}")
+
+        for detail in details:
+            elements.append(Paragraph(detail, details_style))
+            elements.append(Spacer(1, 6))
+
+        elements.append(Spacer(1, 20))
+
+        # Add messages
+        elements.append(Paragraph("Messages:", styles['Heading2']))
+        messages = session.messages.all().order_by('created_at')
+
+        if messages:
+            for message in messages:
+                elements.append(Spacer(1, 12))
+                sender_type = "Support" if message.sender.is_staff else "User"
+                elements.append(Paragraph(
+                    f"From: {sender_type} ({message.sender.email}) - {message.created_at.strftime('%Y-%m-%d %H:%M:%S')}",
+                    styles['Heading3']
+                ))
+                elements.append(Paragraph(message.content, details_style))
+        else:
+            elements.append(Paragraph("No messages found.", details_style))
+
+        # Build the PDF
+        doc.build(elements)
+
+        # Get the value of the BytesIO buffer
+        pdf = buffer.getvalue()
+        buffer.close()
+
+        # Create the HTTP response
+        response = HttpResponse(content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="chat_session_{session.id}.pdf"'
+        response.write(pdf)
+
+        return response
 
 
 # Admin Chat Session ViewSet
@@ -199,6 +290,90 @@ class AdminChatSessionViewSet(mixins.ListModelMixin,
         ).update(is_read=True)
         return Response({'status': 'messages marked as read'})
 
+    @extend_schema(
+        summary="Admin: Export chat session as PDF",
+        description="Generate and download a PDF document containing the chat session details and messages",
+        responses={
+            200: OpenApiResponse(
+                description="PDF file containing chat session details",
+                response=OpenApiTypes.BINARY
+            )
+        },
+        tags=["Chat Admin API"]
+    )
+    @action(detail=True, methods=['get'])
+    def export_pdf(self, request, pk=None):
+        """
+        Export chat session details and messages as a PDF document.
+        """
+        session = self.get_object()
+
+        # Create a BytesIO buffer to store the PDF
+        buffer = BytesIO()
+
+        # Create the PDF document
+        doc = SimpleDocTemplate(buffer, pagesize=letter)
+        styles = getSampleStyleSheet()
+        elements = []
+
+        # Add title
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=16,
+            spaceAfter=30
+        )
+        elements.append(Paragraph(f"Chat Session #{session.id}: {session.title}", title_style))
+        elements.append(Spacer(1, 12))
+
+        # Add session details
+        details_style = styles['Normal']
+        details = [
+            f"User: {session.user.email}",
+            f"Status: {session.status}",
+            f"Created: {session.created_at.strftime('%Y-%m-%d %H:%M:%S')}",
+            f"Last Updated: {session.updated_at.strftime('%Y-%m-%d %H:%M:%S')}"
+        ]
+
+        if session.assigned_admin:
+            details.append(f"Assigned Admin: {session.assigned_admin.email}")
+
+        for detail in details:
+            elements.append(Paragraph(detail, details_style))
+            elements.append(Spacer(1, 6))
+
+        elements.append(Spacer(1, 20))
+
+        # Add messages
+        elements.append(Paragraph("Messages:", styles['Heading2']))
+        messages = session.messages.all().order_by('created_at')
+
+        if messages:
+            for message in messages:
+                elements.append(Spacer(1, 12))
+                sender_type = "Support" if message.sender.is_staff else "User"
+                elements.append(Paragraph(
+                    f"From: {sender_type} ({message.sender.email}) - {message.created_at.strftime('%Y-%m-%d %H:%M:%S')}",
+                    styles['Heading3']
+                ))
+                elements.append(Paragraph(message.content, details_style))
+        else:
+            elements.append(Paragraph("No messages found.", details_style))
+
+        # Build the PDF
+        doc.build(elements)
+
+        # Get the value of the BytesIO buffer
+        pdf = buffer.getvalue()
+        buffer.close()
+
+        # Create the HTTP response
+        response = HttpResponse(content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="chat_session_{session.id}.pdf"'
+        response.write(pdf)
+
+        return response
+
 
 # Chat Message ViewSet for both users and admins
 @extend_schema_view(
@@ -237,3 +412,20 @@ class ChatMessageViewSet(mixins.CreateModelMixin,
 
         # Save the message with the current user as sender
         serializer.save(sender=self.request.user)
+
+
+# Admin List ViewSet
+@extend_schema_view(
+    list=extend_schema(
+        summary="List all admin users",
+        description="Returns a list of all admin users in the system",
+        tags=["Chat API"]
+    )
+)
+class AdminListViewSet(mixins.ListModelMixin,
+                      viewsets.GenericViewSet):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = UserSerializer
+
+    def get_queryset(self):
+        return User.objects.filter(is_staff=True).order_by('email')
