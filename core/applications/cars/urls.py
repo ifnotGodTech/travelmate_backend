@@ -18,4 +18,6 @@ router.register(r'payments', PaymentViewSet)
 urlpatterns = [
     path('api/cars/', include(router.urls)),
     path('webhooks/stripe/', stripe_webhook, name='stripe-webhook'),
+    path('api/cars/recent-searches/', RecentSearchesView.as_view(), name='recent-searches'),
+    path('api/cars/popular-destinations/', PopularDestinationsView.as_view(), name='popular-destinations'),
 ]

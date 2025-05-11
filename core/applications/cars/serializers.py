@@ -2,7 +2,7 @@
 from rest_framework import serializers
 from decimal import Decimal, ROUND_HALF_UP
 from drf_spectacular.utils import extend_schema_field
-from .models import CarServiceFee, Location, Car, CarBooking, Payment, CarCategory, CarCompany, StatusHistory
+from .models import CarServiceFee, Location, Car, CarBooking, Payment, CarCategory, CarCompany, StatusHistory, CarSearch
 from core.applications.stay.models import Booking
 from core.applications.users.models import User
 
@@ -253,3 +253,13 @@ class PaymentSerializer(serializers.ModelSerializer):
 class TransferSearchSerializer(serializers.Serializer):
     """Empty serializer just to satisfy the schema generation"""
     pass
+
+class CarSearchSerializer(serializers.ModelSerializer):
+    pickup_location = LocationSerializer()
+    dropoff_location = LocationSerializer()
+
+    class Meta:
+        model = CarSearch
+        fields = ['id', 'pickup_location', 'dropoff_location', 'pickup_date',
+                 'dropoff_date', 'created_at', 'passengers']
+        read_only_fields = ['id', 'created_at']

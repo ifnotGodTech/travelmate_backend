@@ -391,3 +391,108 @@ payment_schema = extend_schema_view(
         }
     )
 )
+
+# Schema for RecentSearchesView
+recent_searches_schema = extend_schema(
+    summary="Get recent searches",
+    description="Returns the 10 most recent car searches for the authenticated user.",
+    tags=['Car Searches'],
+    responses={
+        200: inline_serializer(
+            name='RecentSearchesResponse',
+            fields={
+                'id': serializers.IntegerField(),
+                'pickup_location': inline_serializer(
+                    name='LocationResponse',
+                    fields={
+                        'id': serializers.IntegerField(),
+                        'code': serializers.CharField(),
+                        'name': serializers.CharField(),
+                        'city': serializers.CharField(),
+                        'country': serializers.CharField(),
+                        'address': serializers.CharField(),
+                        'latitude': serializers.DecimalField(max_digits=9, decimal_places=6),
+                        'longitude': serializers.DecimalField(max_digits=9, decimal_places=6),
+                        'airport_code': serializers.CharField()
+                    }
+                ),
+                'dropoff_location': inline_serializer(
+                    name='LocationResponse',
+                    fields={
+                        'id': serializers.IntegerField(),
+                        'code': serializers.CharField(),
+                        'name': serializers.CharField(),
+                        'city': serializers.CharField(),
+                        'country': serializers.CharField(),
+                        'address': serializers.CharField(),
+                        'latitude': serializers.DecimalField(max_digits=9, decimal_places=6),
+                        'longitude': serializers.DecimalField(max_digits=9, decimal_places=6),
+                        'airport_code': serializers.CharField()
+                    }
+                ),
+                'pickup_date': serializers.DateField(),
+                'dropoff_date': serializers.DateField(),
+                'created_at': serializers.DateTimeField(),
+                'passengers': serializers.IntegerField()
+            }
+        )
+    }
+)
+
+# Schema for PopularDestinationsView
+popular_destinations_schema = extend_schema(
+    summary="Get popular destinations",
+    description="Returns the most popular pickup and dropoff locations based on search frequency in the last 30 days.",
+    tags=['Car Searches'],
+    responses={
+        200: inline_serializer(
+            name='PopularDestinationsResponse',
+            fields={
+                'popular_pickup_locations': serializers.ListField(
+                    child=inline_serializer(
+                        name='PopularLocationResponse',
+                        fields={
+                            'location': inline_serializer(
+                                name='LocationResponse',
+                                fields={
+                                    'id': serializers.IntegerField(),
+                                    'code': serializers.CharField(),
+                                    'name': serializers.CharField(),
+                                    'city': serializers.CharField(),
+                                    'country': serializers.CharField(),
+                                    'address': serializers.CharField(),
+                                    'latitude': serializers.DecimalField(max_digits=9, decimal_places=6),
+                                    'longitude': serializers.DecimalField(max_digits=9, decimal_places=6),
+                                    'airport_code': serializers.CharField()
+                                }
+                            ),
+                            'search_count': serializers.IntegerField()
+                        }
+                    )
+                ),
+                'popular_dropoff_locations': serializers.ListField(
+                    child=inline_serializer(
+                        name='PopularLocationResponse',
+                        fields={
+                            'location': inline_serializer(
+                                name='LocationResponse',
+                                fields={
+                                    'id': serializers.IntegerField(),
+                                    'code': serializers.CharField(),
+                                    'name': serializers.CharField(),
+                                    'city': serializers.CharField(),
+                                    'country': serializers.CharField(),
+                                    'address': serializers.CharField(),
+                                    'latitude': serializers.DecimalField(max_digits=9, decimal_places=6),
+                                    'longitude': serializers.DecimalField(max_digits=9, decimal_places=6),
+                                    'airport_code': serializers.CharField()
+                                }
+                            ),
+                            'search_count': serializers.IntegerField()
+                        }
+                    )
+                )
+            }
+        )
+    }
+)
