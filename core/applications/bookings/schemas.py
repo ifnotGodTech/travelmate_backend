@@ -205,6 +205,34 @@ user_booking_schema = {
             )
         },
         tags=["User Bookings"]
+    ),
+    'export_pdf': extend_schema(
+        summary="Export booking as PDF",
+        description="Generate and download a PDF document containing the booking details and history",
+        parameters=[
+            OpenApiParameter(
+                name='pk',
+                description='Booking ID to export',
+                required=True,
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.PATH
+            )
+        ],
+        responses={
+            200: OpenApiResponse(
+                description="PDF file containing booking details",
+                response=OpenApiTypes.BINARY
+            ),
+            403: OpenApiResponse(
+                description="Permission denied - user can only access their own bookings",
+                response=inline_serializer(
+                    name="PermissionDeniedError",
+                    fields={"error": serializers.CharField()}
+                )
+            ),
+            404: booking_not_found_response
+        },
+        tags=["User Bookings"]
     )
 }
 
@@ -297,6 +325,28 @@ unified_booking_schema = {
                     )
                 ]
             )
+        },
+        tags=["Admin Bookings"]
+    ),
+
+    'export_all_pdf': extend_schema(
+        summary="Export all user bookings as PDF",
+        description="Generate and download a PDF document containing all bookings for a specific user",
+        parameters=[
+            OpenApiParameter(
+                name='user_id',
+                description='User ID to export bookings for',
+                required=True,
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY
+            )
+        ],
+        responses={
+            200: OpenApiResponse(
+                description="PDF file containing all user bookings",
+                response=OpenApiTypes.BINARY
+            ),
+            400: invalid_request_response
         },
         tags=["Admin Bookings"]
     ),

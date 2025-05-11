@@ -16,6 +16,14 @@ from django.conf import settings
 from drf_spectacular.utils import extend_schema, OpenApiParameter, extend_schema_view
 from drf_spectacular.types import OpenApiTypes
 from rest_framework.permissions import BasePermission
+from django.http import HttpResponse
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from io import BytesIO
+from datetime import datetime
 
 from core.applications.flights.models import Flight, FlightBooking, PassengerBooking, PaymentDetail
 from core.applications.cars.models import CarBooking, Payment, StatusHistory
@@ -125,54 +133,141 @@ class UserBookingViewSet(viewsets.ViewSet):
 
         return Response(result, status=status.HTTP_200_OK)
 
-@extend_schema_view(
-    list=extend_schema(
-        description="List all bookings with filtering options for date range and booking type",
-        parameters=[
-            OpenApiParameter(
-                name='start_date',
-                type=OpenApiTypes.DATE,
-                location=OpenApiParameter.QUERY,
-                description='Filter bookings created on or after this date',
-                required=False
-            ),
-            OpenApiParameter(
-                name='end_date',
-                type=OpenApiTypes.DATE,
-                location=OpenApiParameter.QUERY,
-                description='Filter bookings created on or before this date',
-                required=False
-            ),
-            OpenApiParameter(
-                name='type',
-                type=OpenApiTypes.STR,
-                location=OpenApiParameter.QUERY,
-                description='Filter by booking type (car, flight)',
-                required=False,
-                enum=['car', 'flight']
-            ),
-            OpenApiParameter(
-                name='status',
-                type=OpenApiTypes.STR,
-                location=OpenApiParameter.QUERY,
-                description='Filter by booking status',
-                required=False
-            ),
-        ]
-    ),
-    retrieve=extend_schema(
-        description="Get detailed booking information for any booking type",
-        parameters=[
-            OpenApiParameter(
-                name='pk',
-                type=OpenApiTypes.INT,
-                location=OpenApiParameter.PATH,
-                description='ID of the booking to retrieve',
-                required=True
+    @action(detail=True, methods=['get'])
+    def export_pdf(self, request, pk=None):
+        """
+        Export a single booking as PDF
+        """
+        try:
+            booking = Booking.objects.get(pk=pk)
+
+            # Check if user has permission to access this booking
+            if not request.user.is_staff and booking.user != request.user:
+                return Response(
+                    {"error": "You don't have permission to access this booking"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            booking_type = self._determine_booking_type(booking)
+
+            # Create PDF
+            buffer = BytesIO()
+            doc = SimpleDocTemplate(buffer, pagesize=letter)
+            styles = getSampleStyleSheet()
+            elements = []
+
+            # Add title
+            title_style = ParagraphStyle(
+                'CustomTitle',
+                parent=styles['Heading1'],
+                fontSize=16,
+                spaceAfter=30
             )
-        ]
-    )
-)
+            elements.append(Paragraph(f"Booking Details - #{booking.id}", title_style))
+            elements.append(Paragraph(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']))
+            elements.append(Spacer(1, 20))
+
+            # Add booking details
+            details_data = [
+                ['Booking ID', str(booking.id)],
+                ['Status', booking.status],
+                ['Created At', booking.created_at.strftime('%Y-%m-%d %H:%M')],
+                ['Type', booking_type.capitalize() if booking_type else 'Unknown']
+            ]
+
+            # Add type-specific details
+            if booking_type == 'car':
+                car_booking = CarBooking.objects.get(booking=booking)
+                details_data.extend([
+                    ['Pickup Date', car_booking.pickup_date.strftime('%Y-%m-%d')],
+                    ['Dropoff Date', car_booking.dropoff_date.strftime('%Y-%m-%d')],
+                    ['Car Model', car_booking.car.model if car_booking.car else 'N/A'],
+                ])
+                payment = Payment.objects.filter(booking=booking, status='COMPLETED').first()
+                if payment:
+                    details_data.append(['Total Amount', f"${payment.amount:.2f}"])
+            elif booking_type == 'flight':
+                flight_booking = FlightBooking.objects.get(booking=booking)
+                first_flight = Flight.objects.filter(flight_booking=flight_booking).order_by('departure_datetime').first()
+                if first_flight:
+                    details_data.extend([
+                        ['Departure', first_flight.departure_airport],
+                        ['Arrival', first_flight.arrival_airport],
+                        ['Flight Number', f"{first_flight.airline_code}{first_flight.flight_number}"],
+                        ['Departure Date', first_flight.departure_datetime.strftime('%Y-%m-%d %H:%M')],
+                    ])
+                payment = PaymentDetail.objects.filter(booking=booking, payment_status='COMPLETED').first()
+                if payment:
+                    details_data.append(['Total Amount', f"${payment.amount:.2f}"])
+
+            # Create details table
+            details_table = Table(details_data, colWidths=[2*inch, 4*inch])
+            details_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (0, -1), colors.lightgrey),
+                ('TEXTCOLOR', (0, 0), (0, -1), colors.black),
+                ('ALIGN', (0, 0), (0, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (0, -1), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
+                ('BACKGROUND', (1, 0), (1, -1), colors.white),
+                ('TEXTCOLOR', (1, 0), (1, -1), colors.black),
+                ('FONTNAME', (1, 0), (1, -1), 'Helvetica'),
+                ('FONTSIZE', (1, 0), (1, -1), 10),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ]))
+
+            elements.append(details_table)
+            elements.append(Spacer(1, 20))
+
+            # Add history section
+            elements.append(Paragraph("Booking History", styles['Heading2']))
+            elements.append(Spacer(1, 10))
+
+            history_entries = BookingHistory.objects.filter(booking=booking).order_by('-changed_at')
+            history_data = [['Date', 'Status', 'Notes']]
+
+            for entry in history_entries:
+                history_data.append([
+                    entry.changed_at.strftime('%Y-%m-%d %H:%M'),
+                    entry.status,
+                    entry.notes or 'N/A'
+                ])
+
+            # Create history table
+            history_table = Table(history_data, colWidths=[1.5*inch, 1.5*inch, 3*inch])
+            history_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
+                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 1), (-1, -1), 9),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ]))
+
+            elements.append(history_table)
+            doc.build(elements)
+
+            # Prepare response
+            buffer.seek(0)
+            response = HttpResponse(buffer, content_type='application/pdf')
+            response['Content-Disposition'] = f'attachment; filename="booking_{booking.id}_{datetime.now().strftime("%Y%m%d")}.pdf"'
+            return response
+
+        except Booking.DoesNotExist:
+            return Response(
+                {"error": "Booking not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
 @apply_unified_booking_schema
 class UnifiedBookingAdminViewSet(viewsets.ViewSet):
     """
@@ -183,7 +278,6 @@ class UnifiedBookingAdminViewSet(viewsets.ViewSet):
     permission_classes = [IsAdminUser]
 
     queryset = Booking.objects.all()
-
 
     def list(self, request):
         """
@@ -375,55 +469,6 @@ class UnifiedBookingAdminViewSet(viewsets.ViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-
-    @extend_schema(
-        parameters=[
-            OpenApiParameter(
-                name='pk',
-                description='Booking ID',
-                required=True,
-                type=OpenApiTypes.INT,
-                location=OpenApiParameter.PATH
-            )
-        ]
-    )
-
-    @action(detail=True, methods=['post'])
-    def cancel_booking(self, request, pk=None):
-        """
-        Cancel any booking type with optional refund
-        """
-        try:
-            booking = Booking.objects.get(pk=pk)
-            booking_type = self._determine_booking_type(booking)
-
-            if booking.status == 'CANCELLED':
-                return Response(
-                    {"error": "Booking is already cancelled"},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            process_refund = request.data.get('process_refund', False)
-            refund_amount = request.data.get('refund_amount')
-            cancellation_reason = request.data.get('reason', 'Admin cancellation')
-
-            if booking_type == 'car':
-                return self._cancel_car_booking(booking, request, process_refund, refund_amount, cancellation_reason)
-            elif booking_type == 'flight':
-                return self._cancel_flight_booking(booking, request, process_refund, refund_amount, cancellation_reason)
-            else:
-                return Response(
-                    {"error": "Unknown booking type"},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-        except Booking.DoesNotExist:
-            return Response(
-                {"error": "Booking not found"},
-                status=status.HTTP_404_NOT_FOUND
-            )
-
-    # Helper methods
     def _determine_booking_type(self, booking):
         """Determine if a booking is for a car or flight"""
         try:
@@ -635,8 +680,6 @@ class UnifiedBookingAdminViewSet(viewsets.ViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-
-
     def _update_flight_booking(self, booking, request):
         """Update flight details"""
         try:
@@ -700,8 +743,6 @@ class UnifiedBookingAdminViewSet(viewsets.ViewSet):
                 {"error": "Flight booking not found"},
                 status=status.HTTP_404_NOT_FOUND
             )
-
-
 
     def _cancel_car_booking(self, booking, request, process_refund, refund_amount, cancellation_reason):
         """Cancel a car booking with optional refund"""
@@ -982,7 +1023,6 @@ class UnifiedBookingAdminViewSet(viewsets.ViewSet):
         except Exception as e:
             return {'error': str(e)}
 
-
     def _record_booking_history(self, booking, status, notes, changed_by=None, field_changes=None):
         """
         Universal method to record booking history for any booking type
@@ -997,7 +1037,6 @@ class UnifiedBookingAdminViewSet(viewsets.ViewSet):
             booking_type=booking_type,
             field_changes=field_changes or {}
         )
-
 
     @extend_schema(
         parameters=[
@@ -1056,3 +1095,97 @@ class UnifiedBookingAdminViewSet(viewsets.ViewSet):
                 {"error": "Booking not found"},
                 status=status.HTTP_404_NOT_FOUND
             )
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='user_id',
+                description='User ID to export bookings for',
+                required=True,
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY
+            )
+        ]
+    )
+    @action(detail=False, methods=['get'])
+    def export_all_pdf(self, request):
+        """
+        Export all bookings for a user as PDF (Admin only)
+        """
+        user_id = request.query_params.get('user_id')
+        if not user_id:
+            return Response(
+                {"error": "user_id parameter is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Get all bookings for the user
+        bookings = Booking.objects.filter(user_id=user_id).order_by('-created_at')
+
+        # Create PDF
+        buffer = BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=letter)
+        styles = getSampleStyleSheet()
+        elements = []
+
+        # Add title
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=16,
+            spaceAfter=30
+        )
+        elements.append(Paragraph(f"Booking History Report", title_style))
+        elements.append(Paragraph(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']))
+        elements.append(Spacer(1, 20))
+
+        # Add bookings table
+        data = [['Booking ID', 'Type', 'Status', 'Created', 'Total Amount']]
+
+        for booking in bookings:
+            booking_type = self._determine_booking_type(booking)
+            total_amount = None
+
+            if booking_type == 'car':
+                payment = Payment.objects.filter(booking=booking, status='COMPLETED').first()
+                if payment:
+                    total_amount = f"${payment.amount:.2f}"
+            elif booking_type == 'flight':
+                payment = PaymentDetail.objects.filter(booking=booking, payment_status='COMPLETED').first()
+                if payment:
+                    total_amount = f"${payment.amount:.2f}"
+
+            data.append([
+                str(booking.id),
+                booking_type.capitalize() if booking_type else 'Unknown',
+                booking.status,
+                booking.created_at.strftime('%Y-%m-%d %H:%M'),
+                total_amount or 'N/A'
+            ])
+
+        # Create table
+        table = Table(data)
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 12),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
+            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 1), (-1, -1), 10),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ]))
+
+        elements.append(table)
+        doc.build(elements)
+
+        # Prepare response
+        buffer.seek(0)
+        response = HttpResponse(buffer, content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="bookings_{user_id}_{datetime.now().strftime("%Y%m%d")}.pdf"'
+        return response
