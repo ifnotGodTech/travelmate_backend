@@ -1313,13 +1313,13 @@ class GoogleLoginView(SocialLoginView):
 
         if response.status_code == 200:
             user = self.user
-            if user.has_usable_password():
-                return Response(
-                    {
-                        "detail": "This account was created using email/password. Please log in using your credentials."
-                    },
-                    status=403
-            )
+            # if user.has_usable_password():
+            #     return Response(
+            #         {
+            #             "detail": "This account was created using email/password. Please log in using your credentials."
+            #         },
+            #         status=403
+            # )
             refresh = RefreshToken.for_user(user)
             data = {
                 'refresh': str(refresh),

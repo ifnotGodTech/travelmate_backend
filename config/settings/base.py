@@ -92,6 +92,8 @@ THIRD_PARTY_APPS = [
     "corsheaders",
     "drf_spectacular",
     "channels",
+    "cloudinary",
+    "cloudinary_storage",
 ]
 
 LOCAL_APPS = [
