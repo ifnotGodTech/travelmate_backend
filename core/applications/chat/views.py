@@ -172,6 +172,23 @@ class UserChatSessionViewSet(mixins.ListModelMixin,
 
         return response
 
+    @extend_schema(
+        summary="Delete chat session",
+        description="Deletes a chat session and all its messages",
+        responses={
+            204: OpenApiResponse(description="Chat session successfully deleted"),
+            404: OpenApiResponse(description="Chat session not found"),
+            403: OpenApiResponse(description="Not authorized to delete this chat session")
+        },
+        tags=["Chat User API"]
+    )
+    @action(detail=True, methods=['delete'])
+    def delete_session(self, request, pk=None):
+        """Endpoint for users to delete their chat session"""
+        session = self.get_object()
+        session.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
 
 # Admin Chat Session ViewSet
 @extend_schema_view(
@@ -373,6 +390,23 @@ class AdminChatSessionViewSet(mixins.ListModelMixin,
         response.write(pdf)
 
         return response
+
+    @extend_schema(
+        summary="Admin: Delete chat session",
+        description="Admin endpoint to delete a chat session and all its messages",
+        responses={
+            204: OpenApiResponse(description="Chat session successfully deleted"),
+            404: OpenApiResponse(description="Chat session not found"),
+            403: OpenApiResponse(description="Not authorized to delete this chat session")
+        },
+        tags=["Chat Admin API"]
+    )
+    @action(detail=True, methods=['delete'])
+    def delete_session(self, request, pk=None):
+        """Endpoint for admins to delete a chat session"""
+        session = self.get_object()
+        session.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 # Chat Message ViewSet for both users and admins

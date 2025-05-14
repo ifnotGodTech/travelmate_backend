@@ -106,6 +106,7 @@ LOCAL_APPS = [
     "core.applications.tickets",  # Updated to use correct path
     "core.applications.chat",
     "core.applications.policy",
+    "core.applications.dashboard",  # New dashboard app
     # Your stuff: custom apps go here
 ]
 # https://docs.djangoproject.com/en/dev/ref/settings/#installed-apps

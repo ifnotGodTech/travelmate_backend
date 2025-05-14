@@ -31,6 +31,8 @@ urlpatterns = [
     path("", include("core.applications.faq.urls", namespace="faq")),
     path("", include("core.applications.chat.urls", namespace="chat")),
     path("", include("core.applications.policy.urls", namespace="policy")),
+    path("", include("core.applications.dashboard.urls", namespace="dashboard")),
+
 
     # Media files
     *static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT),
