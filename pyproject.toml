@@ -1,3 +1,6 @@
+project = { dependencies = [
+    "pre-commit>=4.2.0",
+] }
 # ==== pytest ====
 [tool.pytest.ini_options]
 minversion = "6.0"

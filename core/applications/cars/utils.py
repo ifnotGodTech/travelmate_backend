@@ -327,6 +327,48 @@ class AmadeusService:
 
         return results
 
+    # def create_transfer_booking(self, booking_data, transfer_id):
+    #     """
+    #     Create a transfer booking with Amadeus API
+    #     """
+    #     try:
+    #         # Include the transfer offer ID as a query parameter
+    #         url = f"{self.base_url}/v1/ordering/transfer-orders?offerId={transfer_id}"
+    #         headers = self._get_headers()
+
+    #         logger.info(f"Creating transfer booking with payload: {booking_data}")
+
+    #         response = requests.post(
+    #             url,
+    #             headers=headers,
+    #             json=booking_data
+    #         )
+
+    #         # Handle token expiration (401 error)
+    #         if response.status_code == 401:
+    #             error_data = response.json()
+    #             if 'errors' in error_data and any(e.get('code') == 38192 or 'access token expired' in e.get('detail', '').lower() for e in error_data.get('errors', [])):
+    #                 logger.info("Access token expired. Refreshing token and retrying request.")
+    #                 cache.delete('amadeus_token')
+    #                 self.token = None
+    #                 headers = self._get_headers()
+
+    #                 response = requests.post(
+    #                     url,
+    #                     headers=headers,
+    #                     json=booking_data
+    #                 )
+
+    #         if response.status_code == 201:
+    #             return response
+    #         else:
+    #             logger.error(f"Failed to create transfer booking: {response.status_code} - {response.text}")
+    #             return response
+
+    #     except Exception as e:
+    #         logger.error(f"Unexpected error in create_transfer_booking: {e}", exc_info=True)
+    #         raise
+
     def create_transfer_booking(self, booking_data, transfer_id):
         """
         Create a transfer booking with Amadeus API
@@ -344,6 +386,10 @@ class AmadeusService:
                 json=booking_data
             )
 
+            # Log Ama-request-Id from response headers
+            ama_request_id = response.headers.get('Ama-request-Id')
+            logger.info(f"Ama-request-Id: {ama_request_id}")
+
             # Handle token expiration (401 error)
             if response.status_code == 401:
                 error_data = response.json()
@@ -358,6 +404,10 @@ class AmadeusService:
                         headers=headers,
                         json=booking_data
                     )
+
+                    # Log Ama-request-Id for retry response
+                    ama_request_id = response.headers.get('Ama-request-Id')
+                    logger.info(f"Ama-request-Id after retry: {ama_request_id}")
 
             if response.status_code == 201:
                 return response
