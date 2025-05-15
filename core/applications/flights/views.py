@@ -172,7 +172,7 @@ class FlightBookingViewSet(viewsets.ModelViewSet):
             booking_type=booking_type,
             base_flight_cost=base_price,
             service_fee=service_fee,
-            currency='USD',  # Default currency, should ideally come from flight offer
+            currency=flight_offers[0].get('price', {}).get('currency', 'USD'),  # Get currency from flight offer
         )
 
         # Create flight records from the cached flight offers
