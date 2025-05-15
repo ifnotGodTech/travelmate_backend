@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.conf import settings
-from .models import ChatSession, ChatMessage
+from .models import ChatSession, ChatMessage, ChatAttachment
 from drf_spectacular.utils import extend_schema_field
 
 User = get_user_model()
@@ -42,12 +42,28 @@ class UserSerializer(serializers.ModelSerializer):
         except:
             return f'{settings.STATIC_URL}images/avatar.png'
 
+class ChatAttachmentSerializer(serializers.ModelSerializer):
+    file_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ChatAttachment
+        fields = ['id', 'file', 'file_url', 'file_name', 'file_type', 'file_size', 'created_at']
+        read_only_fields = ['file_url', 'file_name', 'file_type', 'file_size', 'created_at']
+
+    @extend_schema_field(str)
+    def get_file_url(self, obj):
+        request = self.context.get('request')
+        if obj.file and hasattr(obj.file, 'url'):
+            return request.build_absolute_uri(obj.file.url) if request else obj.file.url
+        return None
+
 class ChatMessageSerializer(serializers.ModelSerializer):
     sender_info = UserSerializer(source='sender', read_only=True)
+    attachments = ChatAttachmentSerializer(many=True, read_only=True)
 
     class Meta:
         model = ChatMessage
-        fields = ['id', 'session', 'sender', 'sender_info', 'content', 'is_read', 'created_at']
+        fields = ['id', 'session', 'sender', 'sender_info', 'content', 'is_read', 'created_at', 'attachments']
         read_only_fields = ['is_read', 'created_at']
 
     def create(self, validated_data):
@@ -63,14 +79,13 @@ class ChatMessageSerializer(serializers.ModelSerializer):
 
 class ChatSessionSerializer(serializers.ModelSerializer):
     user_info = UserSerializer(source='user', read_only=True)
-    admin_info = UserSerializer(source='assigned_admin', read_only=True)
     unread_count = serializers.SerializerMethodField()
     last_message = serializers.SerializerMethodField()
 
     class Meta:
         model = ChatSession
         fields = ['id', 'user', 'user_info', 'title', 'status', 'created_at',
-                  'updated_at', 'assigned_admin', 'admin_info', 'unread_count', 'last_message']
+                  'updated_at', 'unread_count', 'last_message']
         read_only_fields = ['created_at', 'updated_at']
 
     @extend_schema_field(str)
@@ -104,7 +119,8 @@ class ChatSessionSerializer(serializers.ModelSerializer):
             return {
                 'content': last_msg.content,
                 'sender': sender_info,
-                'created_at': last_msg.created_at
+                'created_at': last_msg.created_at,
+                'has_attachments': last_msg.attachments.exists()
             }
         return None
 

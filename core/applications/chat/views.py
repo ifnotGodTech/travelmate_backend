@@ -12,9 +12,10 @@ from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
-from .models import ChatSession, ChatMessage
-from .serializers import ChatSessionSerializer, ChatSessionDetailSerializer, ChatMessageSerializer, UserSerializer
+from .models import ChatSession, ChatMessage, ChatAttachment
+from .serializers import ChatSessionSerializer, ChatSessionDetailSerializer, ChatMessageSerializer, UserSerializer, ChatAttachmentSerializer
 from core.applications.users.models import User
+from rest_framework.parsers import MultiPartParser, FormParser
 
 
 class IsAdminUser(permissions.BasePermission):
@@ -42,12 +43,12 @@ class IsSessionOwnerOrAdmin(permissions.BasePermission):
     ),
     retrieve=extend_schema(
         summary="Get a specific chat session",
-        description="Returns details of a specific chat session including all messages",
+        description="Returns details of a specific chat session including all messages and attachments",
         tags=["Chat User API"]
     ),
     create=extend_schema(
         summary="Create a new chat session",
-        description="Creates a new support chat session",
+        description="Creates a new support chat session. The session will be in WAITING status until an admin responds.",
         tags=["Chat User API"]
     )
 )
@@ -194,18 +195,12 @@ class UserChatSessionViewSet(mixins.ListModelMixin,
 @extend_schema_view(
     list=extend_schema(
         summary="Admin: List all chat sessions",
-        description="Admin access to list all support chat sessions",
+        description="Admin access to list all support chat sessions. Any admin can view and respond to any session.",
         parameters=[
             OpenApiParameter(
                 name="status",
                 type=OpenApiTypes.STR,
                 description="Filter chats by status (OPEN, CLOSED, WAITING, ACTIVE)",
-                required=False
-            ),
-            OpenApiParameter(
-                name="assigned",
-                type=OpenApiTypes.BOOL,
-                description="Filter by assignment status (true=assigned to me, false=unassigned)",
                 required=False
             )
         ],
@@ -213,17 +208,17 @@ class UserChatSessionViewSet(mixins.ListModelMixin,
     ),
     retrieve=extend_schema(
         summary="Admin: Get a specific chat session",
-        description="Admin access to get a specific chat session with all messages",
+        description="Admin access to get a specific chat session with all messages and attachments",
         tags=["Chat Admin API"]
     ),
     update=extend_schema(
         summary="Admin: Update a chat session",
-        description="Admin access to update a chat session (assign, change status)",
+        description="Admin access to update a chat session status",
         tags=["Chat Admin API"]
     ),
     partial_update=extend_schema(
         summary="Admin: Partially update a chat session",
-        description="Admin access to partially update a chat session",
+        description="Admin access to partially update a chat session status",
         tags=["Chat Admin API"]
     )
 )
@@ -245,14 +240,6 @@ class AdminChatSessionViewSet(mixins.ListModelMixin,
         if status_param:
             queryset = queryset.filter(status=status_param)
 
-        # Filter by assignment status if provided
-        assigned_param = self.request.query_params.get('assigned', None)
-        if assigned_param is not None:
-            if assigned_param.lower() == 'true':
-                queryset = queryset.filter(assigned_admin=self.request.user)
-            elif assigned_param.lower() == 'false':
-                queryset = queryset.filter(assigned_admin__isnull=True)
-
         return queryset
 
     def get_serializer_class(self):
@@ -261,23 +248,8 @@ class AdminChatSessionViewSet(mixins.ListModelMixin,
         return ChatSessionSerializer
 
     @extend_schema(
-        summary="Admin: Assign chat session",
-        description="Assign a chat session to the current admin",
-        responses={200: ChatSessionSerializer},
-        tags=["Chat Admin API"]
-    )
-    @action(detail=True, methods=['post'])
-    def assign(self, request, pk=None):
-        session = self.get_object()
-        session.assigned_admin = request.user
-        session.status = 'ACTIVE'
-        session.save()
-        serializer = self.get_serializer(session)
-        return Response(serializer.data)
-
-    @extend_schema(
         summary="Admin: Close chat session",
-        description="Close a chat session",
+        description="Close a chat session. This prevents further messages until reopened.",
         responses={200: ChatSessionSerializer},
         tags=["Chat Admin API"]
     )
@@ -352,9 +324,6 @@ class AdminChatSessionViewSet(mixins.ListModelMixin,
             f"Last Updated: {session.updated_at.strftime('%Y-%m-%d %H:%M:%S')}"
         ]
 
-        if session.assigned_admin:
-            details.append(f"Assigned Admin: {session.assigned_admin.email}")
-
         for detail in details:
             elements.append(Paragraph(detail, details_style))
             elements.append(Spacer(1, 6))
@@ -413,14 +382,29 @@ class AdminChatSessionViewSet(mixins.ListModelMixin,
 @extend_schema_view(
     create=extend_schema(
         summary="Send a chat message",
-        description="Sends a new message in a chat session",
+        description="""Sends a new message in a chat session with optional file attachments.
+
+        For users:
+        - Can only send messages to their own sessions
+        - If session is closed, it will be reopened in WAITING status
+
+        For admins:
+        - Can send messages to any session
+        - If session is in WAITING status, it will be changed to ACTIVE
+        - If session is closed, it will be reopened in ACTIVE status
+
+        File attachments:
+        - Multiple files can be attached to a single message
+        - Files are stored in chat_attachments/session_id/message_id/
+        """,
         tags=["Chat API"]
     )
 )
 class ChatMessageViewSet(mixins.CreateModelMixin,
                         viewsets.GenericViewSet):
-    serializer_class = ChatMessageSerializer
     permission_classes = [permissions.IsAuthenticated]
+    serializer_class = ChatMessageSerializer
+    parser_classes = (MultiPartParser, FormParser)
 
     def get_queryset(self):
         if self.request.user.is_staff:
@@ -436,7 +420,6 @@ class ChatMessageViewSet(mixins.CreateModelMixin,
         # If admin sending first message to a waiting session, update status
         if self.request.user.is_staff and session.status == 'WAITING':
             session.status = 'ACTIVE'
-            session.assigned_admin = self.request.user
             session.save()
 
         # If session is closed, reopen it
@@ -445,7 +428,24 @@ class ChatMessageViewSet(mixins.CreateModelMixin,
             session.save()
 
         # Save the message with the current user as sender
-        serializer.save(sender=self.request.user)
+        message = serializer.save(sender=self.request.user)
+
+        # Handle file attachments
+        files = self.request.FILES.getlist('attachments')
+        for file in files:
+            ChatAttachment.objects.create(
+                message=message,
+                file=file,
+                file_name=file.name,
+                file_type=file.content_type,
+                file_size=file.size
+            )
+
+        # Update read status
+        if self.request.user.is_staff:
+            ChatMessage.objects.filter(session=session, sender__is_staff=False, is_read=False).update(is_read=True)
+        else:
+            ChatMessage.objects.filter(session=session, sender__is_staff=True, is_read=False).update(is_read=True)
 
 
 # Admin List ViewSet
