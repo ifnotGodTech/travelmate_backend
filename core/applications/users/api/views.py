@@ -9,6 +9,7 @@ from rest_framework.filters import OrderingFilter
 from rest_framework.filters import SearchFilter
 from drf_spectacular.utils import extend_schema_view
 from rest_framework.permissions import AllowAny
+from django.contrib.auth import get_user_model
 
 from django.contrib.auth import logout
 import csv
@@ -44,7 +45,7 @@ from rest_framework.viewsets import ViewSet
 from core.applications.users.models import AccountDeletionReason, Profile, User
 from core.applications.users.token import default_token_generator
 from core.helpers.custom_exceptions import CustomError
-from core.applications.users.api.serializers import AdminRegistrationSerializer, AdminUserDetailSerializer, AdminUserSerializer, CustomUserCreateSerializer, EmailAndTokenSerializer, EmailSubmissionSerializer, OTPVerificationSerializer, PasswordResetSerializer, PasswordRetypeSerializer, PasswordSetSerializer, ProfileSerializers, SetNewPasswordSerializer, SuperUserTokenObtainPairSerializer, UserDeleteSerializer, UserSerializer, VerifyOTPSerializer
+from core.applications.users.api.serializers import AdminRegistrationSerializer, AdminUserDetailSerializer, AdminUserSerializer, BulkDeleteUserSerializer, CustomUserCreateSerializer, EmailAndTokenSerializer, EmailSubmissionSerializer, OTPVerificationSerializer, PasswordResetSerializer, PasswordRetypeSerializer, PasswordSetSerializer, ProfileSerializers, SetNewPasswordSerializer, SoftDeletedUserSerializer, SuperUserTokenObtainPairSerializer, UserDeleteSerializer, UserSerializer, VerifyOTPSerializer
 from core.helpers.authentication import CustomJWTAuthentication
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -55,11 +56,11 @@ from allauth.socialaccount.providers.facebook.views import FacebookOAuth2Adapter
 from allauth.socialaccount.providers.apple.views import AppleOAuth2Adapter
 from django_filters.rest_framework import DjangoFilterBackend
 from core.applications.users.api.schemas import(
-    submit_email_schema, verify_otp_schema, verify_admin_schema,
+    submit_email_schema, verify_otp_schema, admin_bulk_delete_user,
     resend_otp_schema, admin_list_user_schema, admin_deactivate_user_schema,
     admin_export_user_schema, set_password_schema, login_validate_email_schema,
     login_validate_password_schema, validate_password_reset_token_schema,  reset_password_schema,
-    make_admin_schema, set_new_password_schema
+    admin_activate_user_schema, set_new_password_schema, admin_extend_viewer
 )
 from django.conf import settings as django_settings
 from django.db.models import Count
@@ -819,8 +820,12 @@ class UserViewSet(ModelViewSet):
                 additional_feedback=serializer.validated_data.get("additional_feedback", "")
             )
 
+            # Soft delete: deactivate the user
+            instance.is_active = False
+            instance.save()
+
             utils.logout_user(request)
-            self.perform_destroy(instance)
+
             return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -1392,12 +1397,13 @@ class GoogleLoginView(SocialLoginView):
 #         return response
 
 
+@admin_extend_viewer
 class SuperUserViewSet(viewsets.ModelViewSet):
     """
-    ViewSet for managing admin users, including filtering, searching,
-    exporting user data, and retrieving booking history.
+    ViewSet for managing users by superusers.
+    Provides listing, activation, deactivation, export, and account deletion insights.
     """
-    queryset = User.objects.all().prefetch_related("profile")
+    queryset = get_user_model().objects.all().prefetch_related("profile")
     permission_classes = [IsSuperUser]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ["is_active"]
@@ -1405,9 +1411,10 @@ class SuperUserViewSet(viewsets.ModelViewSet):
     ordering_fields = ["date_joined"]
 
     def get_serializer_class(self):
-        """Return appropriate serializer for list and detail views."""
         if self.action == "retrieve":
             return AdminUserDetailSerializer
+        if self.action == "soft_deleted_users":
+            return SoftDeletedUserSerializer
         return AdminUserSerializer
 
     def get_queryset(self):
@@ -1418,7 +1425,6 @@ class SuperUserViewSet(viewsets.ModelViewSet):
         )
 
         booking_type = self.request.query_params.get("booking_type")
-
         if booking_type == "flights":
             queryset = queryset.filter(user_bookings__flight_booking__isnull=False).distinct()
         elif booking_type == "cars":
@@ -1426,11 +1432,10 @@ class SuperUserViewSet(viewsets.ModelViewSet):
 
         return queryset
 
-
     @admin_list_user_schema
     def list(self, request, *args, **kwargs):
         """
-        Retrieves a list of users with profile details.
+        Retrieve a list of users with profile details.
         Supports filtering, searching, and ordering.
         """
         return super().list(request, *args, **kwargs)
@@ -1439,26 +1444,54 @@ class SuperUserViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["patch"], url_path="deactivate")
     def deactivate_user(self, request, pk=None):
         """
-        Deactivate a user by setting is_active to False.
+        Deactivate a user by setting `is_active` to False.
         """
         user = self.get_object()
+        if not user.is_active:
+            return Response({
+                "status": 400,
+                "message": "User is already deactivated",
+                "error": True
+            }, status=status.HTTP_400_BAD_REQUEST)
+
         user.is_active = False
         user.save()
-        return Response(
-            # {"detail": "User has been deactivated"}
-            {
-                "Status": 200,
-                "Message": "User has been deactivated",
-                "Error": False
-            },
-            status=status.HTTP_200_OK
-        )
+
+        return Response({
+            "status": 200,
+            "message": "User has been deactivated",
+            "error": False
+        }, status=status.HTTP_200_OK)
+
+    @admin_activate_user_schema
+    @action(detail=True, methods=["patch"], url_path="activate")
+    def activate_user(self, request, pk=None):
+        """
+        Activate a user by setting `is_active` to True.
+        """
+        user = self.get_object()
+        if user.is_active:
+            return Response({
+                "status": 400,
+                "message": "User is already active",
+                "error": True
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        user.is_active = True
+        user.save()
+
+        return Response({
+            "status": 200,
+            "message": "User has been activated",
+            "error": False
+        }, status=status.HTTP_200_OK)
 
     @admin_export_user_schema
     @action(detail=False, methods=["get"], url_path="export")
     def export_users(self, request):
         """
-        Export users as a CSV file including ID, Email, Name, Status, Date Joined, and Total Bookings.
+        Export user data to CSV.
+        Includes ID, Email, Name, Is Active, Date Joined, and Total Bookings.
         """
         response = HttpResponse(content_type="text/csv")
         response["Content-Disposition"] = 'attachment; filename="users.csv"'
@@ -1466,8 +1499,7 @@ class SuperUserViewSet(viewsets.ModelViewSet):
         writer = csv.writer(response)
         writer.writerow(["ID", "Email", "Name", "Is Active", "Date Joined", "Total Bookings"])
 
-        users = self.get_queryset()
-        for user in users:
+        for user in self.get_queryset():
             writer.writerow([
                 user.id,
                 user.email,
@@ -1479,42 +1511,36 @@ class SuperUserViewSet(viewsets.ModelViewSet):
 
         return response
 
-    # @make_admin_schema
-    # @action(detail=True, methods=["patch"], url_path="make-admin")
-    # def make_admin(self, request, pk=None):
-    #     """
-    #     Promote a user to admin (set is_staff=True).
-    #     Only superusers can perform this action.
-    #     """
-    #     if not request.user.is_superuser:
-    #         return Response(
-    #             {
-    #                 "Status": 403,
-    #                 "Message": "You do not have permission to perform this action.",
-    #                 "Error": True
-    #             },
-    #             status=status.HTTP_403_FORBIDDEN
-    #         )
+    @action(detail=False, methods=["get"], url_path="soft-deleted-users")
+    def soft_deleted_users(self, request):
+        """
+        List all users who deleted their accounts via soft delete,
+        including reason and optional feedback.
+        """
+        User = get_user_model()
+        users = User.objects.filter(
+            is_active=False,
+            accountdeletionreason__isnull=False
+        ).prefetch_related("accountdeletionreason")
 
-    #     user = self.get_object()
-    #     if user.is_staff:
-    #         return Response(
-    #             {
-    #                 "Status": 400,
-    #                 "Message": "User is already an admin.",
-    #                 "Error": True
-    #             },
-    #             status=status.HTTP_400_BAD_REQUEST
-    #         )
+        serializer = self.get_serializer(users, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
-    #     user.is_staff = True
-    #     user.save()
+    @admin_bulk_delete_user
+    @action(detail=False, methods=["delete"], url_path="bulk-delete")
+    def bulk_delete_users(self, request):
+        """
+        Permanently delete multiple users using a list of user IDs.
+        """
+        serializer = BulkDeleteUserSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
 
-    #     return Response(
-    #         {
-    #             "Status": 200,
-    #             "Message": f"User '{user.email}' has been promoted to admin.",
-    #             "Error": False
-    #         },
-    #         status=status.HTTP_200_OK
-    #     )
+        user_ids = serializer.validated_data["user_ids"]
+        users = get_user_model().objects.filter(id__in=user_ids)
+        deleted_count, _ = users.delete()
+
+        return Response({
+            "status": 200,
+            "message": f"{deleted_count} user(s) have been deleted successfully.",
+            "error": False
+        }, status=status.HTTP_200_OK)

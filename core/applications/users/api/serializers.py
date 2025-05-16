@@ -670,8 +670,8 @@ class AdminUserSerializer(serializers.ModelSerializer):
         model = User
         fields = (
             "id", "email", "first_name", "last_name", "name",
-            "profile_picture", "date_created", "total_bookings",
-            "address", "mobile_number"
+            "profile_picture","total_bookings",
+            "address", "mobile_number", "date_created", "is_active"
         )
 
     @extend_schema_field(str)
@@ -735,7 +735,27 @@ class AdminUserDetailSerializer(AdminUserSerializer):
         )
 
 
+class BulkDeleteUserSerializer(serializers.Serializer):
+    user_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        allow_empty=False,
+        help_text="List of user IDs to be deleted."
+    )
 
+class SoftDeletedUserSerializer(serializers.ModelSerializer):
+    reason = serializers.CharField(source="accountdeletionreason.reason")
+    additional_feedback = serializers.CharField(
+        source="accountdeletionreason.additional_feedback",
+        allow_null=True
+    )
+    deleted_at = serializers.DateTimeField(source="accountdeletionreason.created_at")
+
+    class Meta:
+        model = get_user_model()
+        fields = [
+            "id", "email", "name", "reason",
+            "additional_feedback", "deleted_at"
+        ]
 
 class SuperUserTokenObtainPairSerializer(TokenObtainPairSerializer):
     """
