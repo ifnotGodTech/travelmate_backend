@@ -2,6 +2,13 @@ import base64
 from datetime import datetime
 from time import sleep
 
+import hashlib
+import hmac
+import secrets
+import time
+from django.utils.encoding import force_bytes, force_str
+from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
+
 import pyotp
 from django.conf import settings
 
@@ -170,8 +177,56 @@ class TokenGenerator:
         return datetime.now()
 
 
+class InvitationTokenGenerator:
+    """
+    Token generator for email invitations to non-users.
 
+    Generates secure tokens with expiry based on
+    HMAC-SHA256(email + timestamp + secret).
+    """
 
+    key_salt = "core.applications.users.tokens.InvitationTokenGenerator.TravelMate"
+    timeout = 60 * 60 * 24 * 7  # 7 days expiry
+
+    def make_token(self, email: str) -> str:
+        timestamp = int(time.time())
+        ts_b64 = urlsafe_base64_encode(force_bytes(str(timestamp)))
+        email_b64 = urlsafe_base64_encode(force_bytes(email))
+        nonce = secrets.token_urlsafe(24)  # Adds randomness
+
+        hash_value = f"{email}{timestamp}{nonce}{self.key_salt}"
+        digest = hmac.new(
+            key=force_bytes(settings.SECRET_KEY),
+            msg=force_bytes(hash_value),
+            digestmod=hashlib.sha512,
+        ).hexdigest()
+
+        return f"{email_b64}.{ts_b64}.{nonce}.{digest}"
+
+    def check_token(self, token: str) -> str | None:
+        try:
+            email_b64, ts_b64, nonce, digest = token.split(".")
+            email = urlsafe_base64_decode(email_b64).decode()
+            timestamp = int(urlsafe_base64_decode(ts_b64).decode())
+        except Exception:
+            return None
+
+        if int(time.time()) - timestamp > self.timeout:
+            return None
+
+        expected_hash_value = f"{email}{timestamp}{nonce}{self.key_salt}"
+        expected_digest = hmac.new(
+            key=force_bytes(settings.SECRET_KEY),
+            msg=force_bytes(expected_hash_value),
+            digestmod=hashlib.sha512,
+        ).hexdigest()
+
+        if hmac.compare_digest(digest, expected_digest):
+            return email
+        return None
 
 # Create a default instance of the token generator
 default_token_generator = TokenGenerator()
+
+# A default instance for usage elsewhere
+default_invitation_token_generator = InvitationTokenGenerator()
