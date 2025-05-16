@@ -18,6 +18,7 @@ class ChatSession(models.Model):
     )
 
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='chat_sessions')
+    assigned_admin = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='assigned_chats')
     title = models.CharField(max_length=255)
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='OPEN')
     created_at = models.DateTimeField(auto_now_add=True)

@@ -24,14 +24,29 @@ class IsAdminUser(permissions.BasePermission):
         return request.user.is_authenticated and request.user.is_staff
 
 
-class IsSessionOwnerOrAdmin(permissions.BasePermission):
-    """Permission to only allow the session owner or admin to access."""
+class IsSessionOwnerOrAssignedAdmin(permissions.BasePermission):
+    """Permission to only allow the session owner or assigned admin to access."""
     def has_object_permission(self, request, view, obj):
-        # Admin can access any session
-        if request.user.is_staff:
+        # Superuser can access any session
+        if request.user.is_superuser:
             return True
         # User can only access their own sessions
-        return obj.user == request.user
+        if obj.user == request.user:
+            return True
+        # Admin can only access if they are assigned or if no admin is assigned
+        if request.user.is_staff:
+            return obj.assigned_admin is None or obj.assigned_admin == request.user
+        return False
+
+
+class IsAssignedAdminOrUnassigned(permissions.BasePermission):
+    """Permission to only allow assigned admin or unassigned chats for admins."""
+    def has_object_permission(self, request, view, obj):
+        if not request.user.is_staff:
+            return False
+        if request.user.is_superuser:
+            return True
+        return obj.assigned_admin is None or obj.assigned_admin == request.user
 
 
 # User Chat Session ViewSet
@@ -240,6 +255,12 @@ class AdminChatSessionViewSet(mixins.ListModelMixin,
         if status_param:
             queryset = queryset.filter(status=status_param)
 
+        # If not superuser, filter based on assignment
+        if not self.request.user.is_superuser:
+            queryset = queryset.filter(
+                Q(assigned_admin=self.request.user) | Q(assigned_admin=None)
+            )
+
         return queryset
 
     def get_serializer_class(self):
@@ -402,29 +423,33 @@ class AdminChatSessionViewSet(mixins.ListModelMixin,
 )
 class ChatMessageViewSet(mixins.CreateModelMixin,
                         viewsets.GenericViewSet):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsSessionOwnerOrAssignedAdmin]
     serializer_class = ChatMessageSerializer
     parser_classes = (MultiPartParser, FormParser)
 
     def get_queryset(self):
-        if self.request.user.is_staff:
-            return ChatMessage.objects.all()
         return ChatMessage.objects.filter(session__user=self.request.user)
 
     def perform_create(self, serializer):
         session = serializer.validated_data['session']
-        # Validate the user has access to this session
-        if not self.request.user.is_staff and session.user != self.request.user:
-            raise permissions.PermissionDenied("You don't have permission to send messages in this chat.")
 
-        # If admin sending first message to a waiting session, update status
-        if self.request.user.is_staff and session.status == 'WAITING':
-            session.status = 'ACTIVE'
-            session.save()
+        # Check if user is admin
+        is_admin = self.request.user.is_staff
 
-        # If session is closed, reopen it
+        # If admin is sending message
+        if is_admin:
+            # If no admin is assigned, assign this admin
+            if not session.assigned_admin:
+                session.assigned_admin = self.request.user
+                session.status = 'ACTIVE'
+                session.save()
+            # If another admin is assigned, prevent sending
+            elif session.assigned_admin != self.request.user:
+                raise permissions.PermissionDenied("This chat is already assigned to another admin")
+
+        # If user is sending message and session is closed, reopen it
         elif session.status == 'CLOSED':
-            session.status = 'ACTIVE' if self.request.user.is_staff else 'WAITING'
+            session.status = 'WAITING'
             session.save()
 
         # Save the message with the current user as sender
