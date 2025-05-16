@@ -79,17 +79,19 @@ class ChatMessageSerializer(serializers.ModelSerializer):
 
 class ChatSessionSerializer(serializers.ModelSerializer):
     user_info = UserSerializer(source='user', read_only=True)
+    assigned_admin_info = UserSerializer(source='assigned_admin', read_only=True)
     unread_count = serializers.SerializerMethodField()
     last_message = serializers.SerializerMethodField()
     title = serializers.CharField(required=True, max_length=255)
     status = serializers.CharField(read_only=True)
     user = serializers.PrimaryKeyRelatedField(read_only=True)
+    assigned_admin = serializers.PrimaryKeyRelatedField(read_only=True)
 
     class Meta:
         model = ChatSession
-        fields = ['id', 'user', 'user_info', 'title', 'status', 'created_at',
+        fields = ['id', 'user', 'user_info', 'assigned_admin', 'assigned_admin_info', 'title', 'status', 'created_at',
                   'updated_at', 'unread_count', 'last_message']
-        read_only_fields = ['user', 'status', 'created_at', 'updated_at']
+        read_only_fields = ['user', 'assigned_admin', 'status', 'created_at', 'updated_at']
 
     @extend_schema_field(str)
     def get_unread_count(self, obj):

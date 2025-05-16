@@ -32,8 +32,19 @@ class ChatConsumer(AsyncWebsocketConsumer):
             session = ChatSession.objects.get(id=session_id)
         except ChatSession.DoesNotExist:
             return False
-        if user.is_staff or session.user == user:
+
+        # Superuser can access any session
+        if user.is_superuser:
             return True
+
+        # User can only access their own sessions
+        if session.user == user:
+            return True
+
+        # Admin can only access if they are assigned or if no admin is assigned
+        if user.is_staff:
+            return session.assigned_admin is None or session.assigned_admin == user
+
         return False
 
     async def connect(self):
@@ -80,25 +91,55 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 self.channel_name
             )
 
+    @database_sync_to_async
+    def get_assigned_admin_data(self, session):
+        """Get assigned admin data in a sync context"""
+        if not session.assigned_admin:
+            return None
+        try:
+            from core.applications.users.models import Profile
+            profile = Profile.objects.get(user=session.assigned_admin)
+            return {
+                'id': session.assigned_admin.id,
+                'first_name': profile.first_name or '',
+                'last_name': profile.last_name or '',
+                'profile_pics': profile.get_profile_picture
+            }
+        except Profile.DoesNotExist:
+            return {
+                'id': session.assigned_admin.id,
+                'first_name': '',
+                'last_name': '',
+                'profile_pics': f'{settings.STATIC_URL}images/avatar.png'
+            }
+
     async def receive(self, text_data):
-        text_data_json = json.loads(text_data)
-        message = text_data_json['message']
-        attachments = text_data_json.get('attachments', [])
+        try:
+            text_data_json = json.loads(text_data)
+            message = text_data_json['message']
+            attachments = text_data_json.get('attachments', [])
 
-        chat_message = await self.save_message(
-            session_id=self.session_id,
-            user=self.user,
-            message=message,
-            attachments=attachments
-        )
+            print(f"Received message: {message}")
+            print(f"Attachments: {attachments}")
 
-        # Fetch profile data
-        profile_data = await self.get_user_profile_data(self.user)
+            chat_message = await self.save_message(
+                session_id=self.session_id,
+                user=self.user,
+                message=message,
+                attachments=attachments
+            )
 
-        # Send message to room group with profile data
-        await self.channel_layer.group_send(
-            self.room_group_name,
-            {
+            print(f"Saved message: {chat_message}")
+
+            # Fetch profile data
+            profile_data = await self.get_user_profile_data(self.user)
+
+            # Get assigned admin info
+            session = await self.get_session(self.session_id)
+            assigned_admin_data = await self.get_assigned_admin_data(session)
+
+            # Send message to room group with profile data
+            message_data = {
                 'type': 'chat_message',
                 'id': chat_message['id'],
                 'message': message,
@@ -108,17 +149,21 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 'profile_pics': profile_data['profile_pics'],
                 'is_staff': self.user.is_staff,
                 'created_at': chat_message['created_at'].isoformat(),
-                'attachments': chat_message.get('attachments', [])
+                'attachments': chat_message.get('attachments', []),
+                'assigned_admin': assigned_admin_data
             }
-        )
 
-        # Send notification to the other user
-        session = await self.get_session(self.session_id)
-        recipient = await self.get_session_recipient(session, self.user)
-        if recipient:
+            print(f"Sending message data: {message_data}")
+
             await self.channel_layer.group_send(
-                f'user_{recipient.id}',
-                {
+                self.room_group_name,
+                message_data
+            )
+
+            # Send notification to the other user
+            recipient = await self.get_session_recipient(session, self.user)
+            if recipient:
+                notification_data = {
                     'type': 'notification',
                     'message': {
                         'type': 'new_message',
@@ -134,7 +179,26 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         'has_attachments': bool(attachments)
                     }
                 }
-            )
+                print(f"Sending notification data: {notification_data}")
+                await self.channel_layer.group_send(
+                    f'user_{recipient.id}',
+                    notification_data
+                )
+
+        except PermissionError as e:
+            print(f"Permission error: {str(e)}")
+            await self.send(text_data=json.dumps({
+                'type': 'error',
+                'message': str(e)
+            }))
+        except Exception as e:
+            print(f"Error in receive: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
+            await self.send(text_data=json.dumps({
+                'type': 'error',
+                'message': f'An error occurred while sending the message: {str(e)}'
+            }))
 
     async def chat_message(self, event):
         # Send message to WebSocket with profile data
@@ -148,7 +212,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
             'profile_pics': event['profile_pics'],
             'is_staff': event['is_staff'],
             'created_at': event['created_at'],
-            'attachments': event.get('attachments', [])
+            'attachments': event.get('attachments', []),
+            'assigned_admin': event.get('assigned_admin')
         }))
 
     async def notification(self, event):
@@ -171,62 +236,91 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
     @database_sync_to_async
     def save_message(self, session_id, user, message, attachments=None):
-        session = ChatSession.objects.get(id=session_id)
+        try:
+            session = ChatSession.objects.get(id=session_id)
 
-        status_changed = False
-        if session.status == 'WAITING' and user.is_staff:
-            session.status = 'ACTIVE'
-            status_changed = True
-        elif session.status == 'CLOSED':
-            session.status = 'ACTIVE' if user.is_staff else 'WAITING'
-            status_changed = True
+            # Check admin assignment
+            if user.is_staff:
+                # If no admin is assigned, assign this admin
+                if not session.assigned_admin:
+                    session.assigned_admin = user
+                    session.status = 'ACTIVE'
+                    session.save()
+                # If another admin is assigned, prevent sending
+                elif session.assigned_admin != user:
+                    raise PermissionError("This chat is already assigned to another admin")
+            # If user is sending message and session is closed, reopen it
+            elif session.status == 'CLOSED':
+                session.status = 'WAITING'
+                session.save()
 
-        if status_changed:
-            session.save()
-
-        chat_message = ChatMessage.objects.create(
-            session=session,
-            sender=user,
-            content=message
-        )
-
-        # Handle attachments
-        attachment_data = []
-        if attachments:
-            for attachment in attachments:
-                attachment_obj = ChatAttachment.objects.create(
-                    message=chat_message,
-                    file=attachment['file'],
-                    file_name=attachment['name'],
-                    file_type=attachment['type'],
-                    file_size=attachment['size']
-                )
-                attachment_data.append({
-                    'id': attachment_obj.id,
-                    'file_name': attachment_obj.file_name,
-                    'file_type': attachment_obj.file_type,
-                    'file_size': attachment_obj.file_size,
-                    'file_url': attachment_obj.file.url if attachment_obj.file else None
-                })
-
-        if user.is_staff:
-            ChatMessage.objects.filter(
+            chat_message = ChatMessage.objects.create(
                 session=session,
-                sender__is_staff=False,
-                is_read=False
-            ).update(is_read=True)
-        else:
-            ChatMessage.objects.filter(
-                session=session,
-                sender__is_staff=True,
-                is_read=False
-            ).update(is_read=True)
+                sender=user,
+                content=message
+            )
 
-        return {
-            'id': chat_message.id,
-            'created_at': chat_message.created_at,
-            'attachments': attachment_data
-        }
+            # Handle attachments
+            attachment_data = []
+            if attachments:
+                print(f"Processing attachments: {attachments}")
+                for attachment in attachments:
+                    try:
+                        # Convert base64 to file if needed
+                        if isinstance(attachment['file'], str) and attachment['file'].startswith('data:'):
+                            import base64
+                            from django.core.files.base import ContentFile
+                            # Extract the base64 data
+                            format, filedata = attachment['file'].split(';base64,')
+                            ext = format.split('/')[-1]
+                            # Convert to file
+                            file_data = base64.b64decode(filedata)
+                            file_name = f"{attachment['name']}.{ext}"
+                            file_obj = ContentFile(file_data, name=file_name)
+                        else:
+                            file_obj = attachment['file']
+
+                        attachment_obj = ChatAttachment.objects.create(
+                            message=chat_message,
+                            file=file_obj,
+                            file_name=attachment['name'],
+                            file_type=attachment['type'],
+                            file_size=attachment['size']
+                        )
+                        attachment_data.append({
+                            'id': attachment_obj.id,
+                            'file_name': attachment_obj.file_name,
+                            'file_type': attachment_obj.file_type,
+                            'file_size': attachment_obj.file_size,
+                            'file_url': attachment_obj.file.url if attachment_obj.file else None
+                        })
+                    except Exception as e:
+                        print(f"Error processing attachment: {str(e)}")
+                        raise
+
+            if user.is_staff:
+                ChatMessage.objects.filter(
+                    session=session,
+                    sender__is_staff=False,
+                    is_read=False
+                ).update(is_read=True)
+            else:
+                ChatMessage.objects.filter(
+                    session=session,
+                    sender__is_staff=True,
+                    is_read=False
+                ).update(is_read=True)
+
+            return {
+                'id': chat_message.id,
+                'created_at': chat_message.created_at,
+                'attachments': attachment_data
+            }
+        except Exception as e:
+            print(f"Error in save_message: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
+            raise
 
     @database_sync_to_async
     def get_session_recipient(self, session, current_user):
