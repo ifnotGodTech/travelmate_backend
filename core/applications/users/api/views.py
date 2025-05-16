@@ -1,9 +1,10 @@
 # ruff: noqa
 from smtplib import SMTPRecipientsRefused
 from core.applications.users.api.permissions import IsSuperUser
-from core.applications.users.email import OTPRegistrationEmail
+from core.applications.users.email import OTPRegistrationEmail, RoleInvitationEmail
 import pyotp
 from django.core.cache import cache
+from django.core.exceptions import ValidationError
 from rest_framework import viewsets, permissions, status
 from rest_framework.filters import OrderingFilter
 from rest_framework.filters import SearchFilter
@@ -16,6 +17,7 @@ import csv
 from django.http import HttpResponse
 from django.contrib.auth import update_session_auth_hash
 from django.contrib.auth import user_logged_out
+from django.contrib.auth.password_validation import validate_password
 from django.utils.module_loading import import_string
 from django.utils.timezone import now
 from djoser import signals
@@ -42,10 +44,10 @@ from rest_framework_simplejwt.settings import api_settings
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.viewsets import ViewSet
 
-from core.applications.users.models import AccountDeletionReason, Profile, User
-from core.applications.users.token import default_token_generator
+from core.applications.users.models import AccountDeletionReason, Profile, User, Role, RoleInvitation
+from core.applications.users.token import default_token_generator, default_invitation_token_generator
 from core.helpers.custom_exceptions import CustomError
-from core.applications.users.api.serializers import AdminRegistrationSerializer, AdminUserDetailSerializer, AdminUserSerializer, BulkDeleteUserSerializer, CustomUserCreateSerializer, EmailAndTokenSerializer, EmailSubmissionSerializer, OTPVerificationSerializer, PasswordResetSerializer, PasswordRetypeSerializer, PasswordSetSerializer, ProfileSerializers, SetNewPasswordSerializer, SoftDeletedUserSerializer, SuperUserTokenObtainPairSerializer, UserDeleteSerializer, UserSerializer, VerifyOTPSerializer
+from core.applications.users.api.serializers import AdminRegistrationSerializer, AdminUserDetailSerializer, AdminUserSerializer, BulkDeleteUserSerializer, CustomUserCreateSerializer, EmailAndTokenSerializer, EmailSubmissionSerializer, OTPVerificationSerializer, PasswordResetSerializer, PasswordRetypeSerializer, PasswordSetSerializer, ProfileSerializers, SetNewPasswordSerializer, SoftDeletedUserSerializer, SuperUserTokenObtainPairSerializer, UserDeleteSerializer, UserSerializer, VerifyOTPSerializer, RoleSerializer
 from core.helpers.authentication import CustomJWTAuthentication
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -63,6 +65,7 @@ from core.applications.users.api.schemas import(
     admin_activate_user_schema, set_new_password_schema, admin_extend_viewer
 )
 from django.conf import settings as django_settings
+from django.db import transaction
 from django.db.models import Count
 from rest_framework.views import APIView
 from drf_spectacular.utils import (
@@ -70,7 +73,10 @@ from drf_spectacular.utils import (
     extend_schema_view,
     OpenApiResponse,
     OpenApiExample,
+    OpenApiParameter,
 )
+from drf_spectacular.types import OpenApiTypes
+from core.utils.permissions import PermissionGrouper
 from rest_framework.exceptions import AuthenticationFailed
 from dj_rest_auth.serializers import JWTSerializer
 from allauth.socialaccount.providers.oauth2.client import OAuth2Client
@@ -1544,3 +1550,829 @@ class SuperUserViewSet(viewsets.ModelViewSet):
             "message": f"{deleted_count} user(s) have been deleted successfully.",
             "error": False
         }, status=status.HTTP_200_OK)
+
+class GroupedPermissionsView(APIView):
+    """
+    Retrieve all permissions grouped by app label.
+    Accessible only by superadmins.
+    """
+    permission_classes = [IsAuthenticated, IsSuperUser]
+
+    @extend_schema(
+        summary="Retrieve grouped permissions",
+        description="Returns all Django permissions grouped by their app label. "
+                    "Accessible only by superadmins.",
+        responses={
+            200: {
+                "type": "object",
+                "description": "Grouped permissions data",
+                "example": {
+                    "auth": [
+                        {"id": 1, "name": "Can add user", "codename": "add_user"},
+                        {"id": 2, "name": "Can change user", "codename": "change_user"},
+                        # ...
+                    ],
+                    "blog": [
+                        {"id": 10, "name": "Can add post", "codename": "add_post"},
+                        # ...
+                    ]
+                }
+            },
+            403: {
+                "description": "Permission denied if user is not superadmin"
+            }
+        }
+    )
+    def get(self, request):
+        grouper = PermissionGrouper()
+        data = grouper.get_grouped()
+        return Response(data, status=status.HTTP_200_OK)
+
+
+class RoleViewSet(viewsets.ModelViewSet):
+    """
+    Manage roles (Groups) with descriptions and permissions.
+    Only superadmins can access.
+    """
+    queryset = Role.objects.all()
+    serializer_class = RoleSerializer
+    permission_classes = [IsSuperUser]
+
+    @extend_schema(
+        summary="Create a new role",
+        description="Create a role with a name, description, and associated permissions.",
+        request={
+            "application/json": RoleSerializer,
+        },
+        responses={
+            201: RoleSerializer,
+            400: {
+                "description": "Validation errors on role data",
+            }
+        }
+    )
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
+    @extend_schema(
+        summary="Delete a role",
+        description="Delete a role if it has no assigned users. Otherwise, returns an error.",
+        responses={
+            204: {"description": "Role deleted successfully"},
+            400: {
+                "description": "Cannot delete a role with assigned users",
+                "example": {"message": "Cannot delete a role with assigned users.", "error": True}
+            }
+        }
+    )
+    @transaction.atomic
+    def destroy(self, request, *args, **kwargs):
+        role = self.get_object()
+        if role.user_set.exists():
+            return Response(
+                {
+                    "message": "Cannot delete a role with assigned users.",
+                    "error": True
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        return super().destroy(request, *args, **kwargs)
+
+    @extend_schema(
+        summary="Assign user to role",
+        description="Assign an existing user to the specified role by providing the user's email.",
+        request={
+            "application/json": {
+                "type": "object",
+                "properties": {
+                    "email": {
+                        "type": "string",
+                        "format": "email",
+                        "description": "Email of the user to assign"
+                    }
+                },
+                "required": ["email"],
+                "example": {
+                    "email": "user@example.com"
+                }
+            }
+        },
+        responses={
+            200: {
+                "description": "User assigned to role successfully",
+                "example": {
+                    "message": "User user@example.com assigned to role Admin.",
+                    "error": False
+                }
+            },
+            400: {
+                "description": "Missing email in request",
+                "example": {
+                    "message": "Email is required.",
+                    "error": True
+                }
+            },
+            404: {
+                "description": "User not found",
+                "example": {
+                    "message": "User with this email does not exist.",
+                    "error": True
+                }
+            }
+        }
+    )
+    @action(detail=True, methods=["post"], url_path="assign-admin")
+    def assign_admin(self, request, pk=None):
+        role = self.get_object()
+        email = request.data.get("email")
+        if not email:
+            return Response(
+                {
+                    "message": "Email is required.",
+                    "error": True
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            return Response(
+                {
+                    "message": "User with this email does not exist.",
+                    "error": True
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        role.assign_user(user)
+        return Response(
+            {
+                "message": f"User {user.email} assigned to role {role.name}.",
+                "error": False
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @extend_schema(
+        summary="Invite admin by email",
+        description=(
+            "Invite a new user to the admin dashboard by sending an invitation email. "
+            "If the email has already been invited and not accepted, the request will fail. "
+            "Only superadmins can perform this action."
+        ),
+        request={
+            "application/json": {
+                "type": "object",
+                "properties": {
+                    "email": {
+                        "type": "string",
+                        "format": "email",
+                        "description": "Email of the invited user"
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Name of the invited user (optional)"
+                    }
+                },
+                "required": ["email"],
+                "example": {
+                    "email": "invitee@example.com",
+                    "name": "John Doe"
+                }
+            }
+        },
+        responses={
+            201: {
+                "description": "Invitation sent successfully",
+                "example": {
+                    "message": "Invitation sent successfully.",
+                    "error": False
+                }
+            },
+            400: {
+                "description": "Missing email in request",
+                "example": {
+                    "message": "Email is required.",
+                    "error": True
+                }
+            },
+            409: {
+                "description": "An invitation for this email is already pending",
+                "example": {
+                    "message": "An invitation for this email is already pending.",
+                    "error": True
+                }
+            }
+        }
+    )
+    @action(detail=True, methods=["post"], url_path="invite-admin")
+    def invite_admin(self, request, pk=None):
+        role = self.get_object()
+
+        email = request.data.get("email")
+        name = request.data.get("name", "")
+
+        if not email:
+            return Response(
+                {
+                    "message": "Email is required.",
+                    "error": True
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        existing_invitation = role.invitations.filter(email=email, accepted_at__isnull=True).first()
+        if existing_invitation:
+            return Response(
+                {
+                    "message": "An invitation for this email is already pending.",
+                    "error": True
+                },
+                status=status.HTTP_409_CONFLICT
+            )
+
+        token = default_invitation_token_generator.make_token(email)
+
+        # Create RoleInvitation record
+        print("Sending invitation email to", email)
+        invitation = RoleInvitation.objects.create(
+            email=email,
+            name=name,
+            role=role,
+            token=token,
+            invited_by=request.user
+        )
+
+        # Prepare and send templated email with context
+        email_message = RoleInvitationEmail(
+            context={
+                "email": email,
+                "name": name,
+                "role": role.name,
+                "token": token,
+                "request": request,
+            }
+        )
+        email_message.send([email])
+
+        return Response(
+            {
+                "message": "Invitation sent successfully.",
+                "error": False
+            },
+            status=status.HTTP_201_CREATED
+        )
+
+
+    @extend_schema(
+        summary="Remove a user from a role",
+        description=(
+            "Remove an existing user from the specified role by their email address. "
+            "Only superadmins can perform this action. "
+            "If the user is not part of the role, an error will be returned."
+        ),
+        request={
+            "application/json": {
+                "type": "object",
+                "properties": {
+                    "email": {
+                        "type": "string",
+                        "format": "email",
+                        "description": "Email address of the user to remove from the role"
+                    }
+                },
+                "required": ["email"],
+                "example": {
+                    "email": "user_to_remove@example.com"
+                }
+            }
+        },
+        responses={
+            200: {
+                "description": "User removed successfully from the role",
+                "example": {
+                    "message": "User user_to_remove@example.com has been removed from the role 'Admin'.",
+                    "error": False
+                }
+            },
+            400: {
+                "description": "User is not a member of this role or invalid input",
+                "example": {
+                    "message": "User user_to_remove@example.com is not part of the role.",
+                    "error": True
+                }
+            },
+            404: {
+                "description": "User with the provided email does not exist",
+                "example": {
+                    "message": "User with email user_to_remove@example.com does not exist.",
+                    "error": True
+                }
+            }
+        }
+    )
+    @action(detail=True, methods=["post"], url_path="remove-admin")
+    def remove_admin(self, request, pk=None):
+        role = self.get_object()
+        email = request.data.get("email")
+
+        if not email:
+            return Response(
+                {
+                    "message": "Email is required to remove a user.",
+                    "error": True
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            return Response(
+                {
+                    "message": "User with this email does not exist.",
+                    "error": True
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        if user not in role.users.all():
+            return Response(
+                {
+                    "message": "User is not a member of this role.",
+                    "error": True
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        role.users.remove(user)
+        return Response(
+            {
+                "message": f"User {email} has been removed from the role '{role.name}'.",
+                "error": False
+            },
+            status=status.HTTP_200_OK
+        )
+
+class AcceptInvitationView(APIView):
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        summary="Accept Invitation",
+        description="Accepts an admin invitation using the provided email, token, and sets a new password.",
+        request=OpenApiTypes.OBJECT,
+        examples=[
+            OpenApiExample(
+                "Accept Invitation Request Example",
+                value={
+                    "email": "user@example.com",
+                    "token": "your-token-here",
+                    "password": "NewSecurePassword123!"
+                },
+                request_only=True,
+            ),
+            OpenApiExample(
+                "Successful Response",
+                value={
+                    "message": "Invitation accepted, password set, and role assigned.",
+                    "error": False
+                },
+                response_only=True
+            ),
+            OpenApiExample(
+                "Error Response - Missing Fields",
+                value={
+                    "message": "Email, token, and password are required.",
+                    "error": True
+                },
+                response_only=True
+            ),
+        ],
+        responses={
+            200: OpenApiResponse(description="Invitation accepted and user activated."),
+            400: OpenApiResponse(description="Missing/invalid data or token."),
+            404: OpenApiResponse(description="Invitation not found or already accepted."),
+        }
+    )
+    def post(self, request):
+        email = request.data.get("email")
+        token = request.data.get("token")
+        password = request.data.get("password")
+
+        if not all([email, token, password]):
+            return Response(
+                {"message": "Email, token, and password are required.", "error": True},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        email_from_token = default_invitation_token_generator.check_token(token)
+        if email_from_token != email:
+            return Response(
+                {"message": "Invalid or expired token.", "error": True},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            invitation = RoleInvitation.objects.get(email=email, token=token, accepted_at__isnull=True)
+        except RoleInvitation.DoesNotExist:
+            return Response(
+                {"message": "Invitation not found or already accepted.", "error": True},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Validate password
+        try:
+            validate_password(password)
+        except ValidationError as e:
+            return Response(
+                {"message": " ".join(e.messages), "error": True},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Create user if not exist, or activate existing
+        user, created = User.objects.get_or_create(email=email)
+        user.set_password(password)
+        user.is_active = True
+        user.save()
+
+        # Assign role to user
+        invitation.role.assign_user(user)
+
+        # Mark invitation accepted
+        invitation.accepted_at = now()
+        invitation.save()
+
+        return Response(
+            {"message": "Invitation accepted, password set, and role assigned.", "error": False},
+            status=status.HTTP_200_OK,
+        )
+
+
+
+class ValidateInvitationTokenView(APIView):
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        summary="Validate Invitation Token",
+        description="Check if the invitation token is valid, not expired, and has not already been used.",
+        parameters=[
+            OpenApiParameter(
+                name="token",
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description="The invitation token to be validated.",
+            )
+        ],
+        examples=[
+            OpenApiExample(
+                "Valid Token Example",
+                value={"token": "sample-valid-token"},
+                request_only=True
+            ),
+            OpenApiExample(
+                "Success Response",
+                value={
+                    "message": "Token is valid.",
+                    "email": "invited-user@example.com",
+                    "error": False
+                },
+                response_only=True
+            ),
+            OpenApiExample(
+                "Expired/Invalid Token",
+                value={
+                    "message": "Invalid or expired token.",
+                    "error": True
+                },
+                response_only=True
+            ),
+            OpenApiExample(
+                "Token Already Used",
+                value={
+                    "message": "This invitation has already been used.",
+                    "error": True
+                },
+                response_only=True
+            )
+        ],
+        responses={
+            200: OpenApiResponse(description="Token is valid."),
+            400: OpenApiResponse(description="Missing, invalid or already-used token."),
+        }
+    )
+    def get(self, request):
+        token = request.query_params.get("token")
+
+        if not token:
+            return Response(
+                {"message": "Token is required.", "error": True},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        email = default_invitation_token_generator.check_token(token)
+        if not email:
+            return Response(
+                {"message": "Invalid or expired token.", "error": True},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Check if already accepted
+        if RoleInvitation.objects.filter(email=email, accepted_at__isnull=False).exists():
+            return Response(
+                {"message": "This invitation has already been used.", "error": True},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(
+            {"message": "Token is valid.", "email": email, "error": False},
+            status=status.HTTP_200_OK,
+        )
+
+
+# super admin ---- testing
+
+
+class SuperAdminViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for superadmin accounts.
+    - Only users with is_superuser=True will be listed.
+    - Only superadmins (checked by IsSuperUser) can access these endpoints.
+    - Safe field set: name & email editable; everything else read-only.
+    """
+    permission_classes = [IsSuperUser]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ["is_active"]
+    search_fields = ["email", "name"]
+    ordering_fields = ["date_joined"]
+
+    def get_queryset(self):
+        return User.objects.filter(is_superuser=True).select_related('profile').prefetch_related('groups', 'user_permissions')
+        # qs = User.objects.filter(is_superuser=True)
+        # return qs.annotate(
+        #     total_flight_bookings=Count("user_bookings__flight_booking", distinct=True),
+        #     total_car_bookings=Count("user_bookings__car_booking", distinct=True),
+        #     total_bookings=Count("user_bookings", distinct=True),
+        # )
+
+    def get_serializer_class(self):
+        if self.action in ("retrieve", "update", "partial_update"):
+            return AdminUserDetailSerializer
+        return AdminUserSerializer
+
+    # def partial_update(self, request, *args, **kwargs):
+    #     # Ensure only name/email can change:
+    #     for field in set(request.data) - {"name", "email"}:
+    #         request.data.pop(field, None)
+    #     response = super().partial_update(request, *args, **kwargs)
+    #     logger.info(f"Superadmin {self.get_object().email} updated by {request.user.email}")
+    #     return response
+
+    def update(self, request, *args, **kwargs):
+        return Response(
+            {
+                "message": "Editing superadmin details is not allowed.",
+                "error": True
+            },
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+
+    @action(detail=False, methods=["post"], url_path="transfer-superadmin")
+    def transfer_superadmin(self, request):
+        """
+        Transfer superadmin privileges to another user via email.
+        Payload must include:
+        - `email`: recipient's email
+        - `transfer_action`: 'revoke' or 'change_role'
+        - `new_role_id`: required if action is 'change_role'
+        """
+        email = request.data.get("email", "").strip().lower()
+        transfer_action = request.data.get("transfer_action", "").strip().lower()
+        new_role_id = request.data.get("new_role_id")
+
+        if not email or not transfer_action:
+            return Response(
+                {
+                    "message": "Both 'email' and 'transfer_action' are required.",
+                    "error": True
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if email == request.user.email:
+            return Response(
+                {
+                    "message": "You cannot transfer superadmin rights to yourself.",
+                    "error": True
+                },
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        try:
+            new_superadmin = User.objects.get(email=email)
+        except User.DoesNotExist:
+            return Response(
+                {
+                    "message": f"No user found with email: {email}.",
+                    "error": True
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        if new_superadmin.is_superuser:
+            return Response(
+                {
+                    "message": f"{email} is already a superadmin.",
+                    "error": True
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if transfer_action not in {"revoke", "change_role"}:
+            return Response(
+                {
+                    "message": "transfer_action must be 'revoke' or 'change_role'.",
+                    "error": True
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if transfer_action == "change_role" and not new_role_id:
+            return Response(
+                {
+                    "message": "'new_role_id' is required when changing role.",
+                    "error": True
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            with transaction.atomic():
+                # Promote new user
+                new_superadmin.is_superuser = True
+                new_superadmin.save()
+
+                # Demote current user
+                request.user.is_superuser = False
+                if transfer_action == "change_role":
+                    request.user.role_id = new_role_id
+                request.user.save()
+
+        except Exception as e:
+            return Response(
+                {
+                    "message": "An unexpected error occurred during the transfer.",
+                    "error": True
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+        return Response(
+            {
+                "message": f"{email} has been promoted to superadmin.",
+                "previous_superadmin_action": transfer_action,
+                "error": False
+            },
+            status=status.HTTP_200_OK
+        )
+
+
+
+
+
+    # old
+
+    @action(detail=False, methods=["post"], url_path="invite-superadmin")
+    def invite_superadmin(self, request):
+        """
+        Invite someone to become a superadmin by email.
+        - If user exists, return error.
+        - If not, create inactive user with token, send email with link to set password.
+        """
+        email = request.data.get("email")
+        action = request.data.get("action")  # 'revoke' or 'change_role'
+        new_role = request.data.get("new_role")  # optional
+
+        if User.objects.filter(email=email).exists():
+            return Response({"error": "A user with this email already exists."}, status=400)
+
+        # Create inactive user (or user with is_active=False)
+        temp_user = User.objects.create_user(email=email, is_active=False)
+        token = str(uuid.uuid4())
+        temp_user.invite_token = token  # Add field if needed
+        temp_user.save()
+
+        # Store transfer intent somewhere? (optional: add to a temporary table)
+        # Send email
+        # send_mail(
+        #     subject="You're invited as Superadmin",
+        #     message=f"Click here to set password and become superadmin: {FRONTEND_URL}/accept-invite/{token}",
+        #     from_email=settings.DEFAULT_FROM_EMAIL,
+        #     recipient_list=[email],
+        # )
+
+        logger.info(f"{request.user.email} invited {email} to become a superadmin")
+        return Response({"message": "Invitation sent successfully."})
+
+
+        #  here
+
+
+        @action(detail=True, methods=["patch"], url_path="promote")
+        def promote_to_superadmin(self, request, pk=None):
+            """
+            Promote a user to superadmin.
+            """
+            user = self.get_object()
+            if user.is_superuser:
+                return Response(
+                    {
+                        "message": "User is already a superadmin.",
+                        "error": True
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            user.is_superuser = True
+            user.save()
+            return Response(
+                {"message": f"{user.email} is now a superadmin.", "error": False},
+                status=status.HTTP_200_OK
+            )
+
+    @action(detail=True, methods=["patch"], url_path="revoke-superadmin")
+    def revoke_superadmin(self, request, pk=None):
+        """
+        revokes super admin privileges
+        """
+        with transaction.atomic():
+            user = self.get_object()
+
+            if user == request.user:
+                return Response(
+                    {
+                        "message": "You cannot revoke your own superadmin status.",
+                        "error": True
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            active_superadmins = User.objects.filter(is_superuser=True).exclude(pk=user.pk).count()
+
+            if active_superadmins == 0:
+                return Response(
+                    {
+                        "message": "There must be at least one superadmin remaining.",
+                        "error": True
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            user.is_superuser = False
+            user.save()
+            logger.info(f"Superadmin {user.email} deactivated by {request.user.email}")
+
+            return Response(
+                {
+                    "message": f"{user.email} is no longer a superadmin.",
+                    "error": False
+                },
+                status=status.HTTP_200_OK
+            )
+
+    @action(detail=True, methods=["patch"], url_path="deactivate")
+    def deactivate_superadmin(self, request, pk=None):
+        user = self.get_object()
+
+        if user == request.user:
+            return Response(
+                {
+                    "message": "You cannot deactivate your own account.",
+                    "error": True
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        active_superadmins = User.objects.filter(is_superuser=True, is_active=True).exclude(pk=user.pk).count()
+
+        if active_superadmins == 0:
+            return Response(
+                {
+                    "message": "There must be at least one active superadmin.",
+                    "error": True
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        user.is_active = False
+        user.save()
+        logger.info(f"Superadmin {user.email} deactivated by {request.user.email}")
+
+        return Response(
+            {
+                "message": f"{user.email} has been deactivated.",
+                "error": False
+            },
+            status=status.HTTP_200_OK
+        )
