@@ -1,5 +1,10 @@
-from core.applications.users.api.serializers import AdminRegistrationSerializer, AdminUserSerializer, CustomUserCreateSerializer, EmailAndTokenSerializer, EmailSubmissionSerializer, OTPVerificationSerializer, PasswordSetSerializer
-from drf_spectacular.utils import extend_schema
+from core.applications.users.api.serializers import(
+     AdminRegistrationSerializer, AdminUserDetailSerializer, AdminUserSerializer,
+     BulkDeleteUserSerializer,
+     EmailAndTokenSerializer, EmailSubmissionSerializer,
+     OTPVerificationSerializer, PasswordSetSerializer, SoftDeletedUserSerializer
+)
+from drf_spectacular.utils import extend_schema, extend_schema_view
 from drf_spectacular.utils import OpenApiParameter, OpenApiExample, OpenApiTypes, OpenApiResponse
 from djoser.conf import settings
 
@@ -136,6 +141,18 @@ resend_otp_schema = extend_schema(
     },
 )
 
+admin_extend_viewer = extend_schema_view(
+    list=extend_schema(
+        summary="List all admin users",
+        description="Returns a list of all admin users with optional filters.",
+        responses={200: AdminUserSerializer(many=True)}
+    ),
+    retrieve=extend_schema(
+        summary="Get a specific admin user",
+        description="Retrieves detailed information for a specific admin user.",
+        responses={200: AdminUserDetailSerializer}
+    ),
+)
 
 admin_list_user_schema = extend_schema(
         operation_id="admin_list_user",
@@ -151,15 +168,69 @@ admin_list_user_schema = extend_schema(
 
 
 admin_deactivate_user_schema = extend_schema(
+        operation_id="admin_deactivate_user",
+        summary="Deactivate User",
         description="Deactivate a user by setting `is_active` to False.",
         responses={200: {"type": "object", "properties": {"detail": {"type": "string"}}}},
     )
 
+admin_activate_user_schema = extend_schema(
+    operation_id="admin_activate_user",
+    summary="Activate User" ,
+    description="Activate a user by  setting is_active to True.",
+     responses={200: {"type": "object", "properties": {"detail": {"type": "string"}}}},
+)
+
 admin_export_user_schema = extend_schema(
+        operation_id="admin_export_user",
+        summary="Export User Data",
         description="Export user data as a CSV file.",
         responses={200: {"content": {"text/csv": {}}}},
     )
 
+admin_bulk_delete_user = extend_schema(
+    summary="Bulk Delete Users",
+    description="Deletes multiple users at once using a list of user IDs.",
+    request=BulkDeleteUserSerializer,
+    responses={
+        200: OpenApiResponse(
+            description="Users successfully deleted",
+            examples=[
+                OpenApiExample(
+                    "Success",
+                    value={
+                        "Status": 200,
+                        "Message": "3 user(s) have been deleted successfully.",
+                        "Error": False
+                    }
+                )
+            ]
+        ),
+        400: OpenApiResponse(
+            description="Validation or deletion error",
+            examples=[
+                OpenApiExample(
+                    "Missing or invalid data",
+                    value={
+                        "Status": 400,
+                        "Message": "Please provide a valid list of user IDs.",
+                        "Error": True
+                    }
+                )
+            ]
+        ),
+    }
+)
+
+admin_list_deleted_users = extend_schema(
+        summary="List users who deleted their account",
+        description=(
+            "Returns a list of users who have soft-deleted their accounts by setting `is_active=False`. "
+            "Includes the reason and any additional feedback they provided during deletion."
+        ),
+        responses={200: OpenApiResponse(response=SoftDeletedUserSerializer(many=True))},
+        tags=["Admin - Users"]
+    )
 
 reset_password_schema = extend_schema(
     summary="(Step 1 to reset passoword.)Request password reset email",
