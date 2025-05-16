@@ -52,23 +52,6 @@ def notify_session_update(sender, instance, **kwargs):
         'status': instance.status,
     }
 
-    if instance.assigned_admin:
-        try:
-            profile = Profile.objects.get(user=instance.assigned_admin)
-            session_data['assigned_admin'] = {
-                'id': instance.assigned_admin.id,
-                'first_name': profile.first_name or '',
-                'last_name': profile.last_name or '',
-                'profile_pics': profile.get_profile_picture
-            }
-        except Profile.DoesNotExist:
-            session_data['assigned_admin'] = {
-                'id': instance.assigned_admin.id,
-                'first_name': '',
-                'last_name': '',
-                'profile_pics': f'{settings.STATIC_URL}images/avatar.png'
-            }
-
     # Notify the chat room
     async_to_sync(channel_layer.group_send)(
         f'chat_{instance.id}',
