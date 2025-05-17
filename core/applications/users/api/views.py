@@ -71,7 +71,7 @@ from core.applications.users.api.schemas import(
     admin_activate_user_schema, set_new_password_schema, admin_extend_viewer,
     admin_grouped_permissions_schema, create_role_schema, delete_role_schema, assign_admin_schema,
     invite_admin_schema, remove_admin_schema, accept_invitation_schema, validate_invitation_schema,
-    super_admin_view_schema, super_admin_transfer_schema, super_admin_invite_schema
+    super_admin_view_schema, super_admin_transfer_schema, super_admin_invite_schema, role_viewset_schema
 )
 from django.conf import settings as django_settings
 from django.db import transaction
@@ -1560,11 +1560,14 @@ class SuperUserViewSet(viewsets.ModelViewSet):
             "error": False
         }, status=status.HTTP_200_OK)
 
+
 class MissingEmailError(ValidationError):
     """Raised when no email is provided."""
 
+
 class DuplicateInvitationError(ValidationError):
     """Raised when there’s already a pending invitation for that email."""
+
 
 class RoleInvitationService:
     def __init__(self, email, name, role, invited_by, request):
@@ -1622,6 +1625,7 @@ class RoleInvitationService:
         )
         email_message.send([self.email])
 
+
 class GroupedPermissionsView(APIView):
     """
     Retrieve all permissions grouped by app label.
@@ -1635,7 +1639,7 @@ class GroupedPermissionsView(APIView):
         data = grouper.get_grouped()
         return Response(data, status=status.HTTP_200_OK)
 
-
+@role_viewset_schema
 class RoleViewSet(viewsets.ModelViewSet):
     """
     Manage roles (Groups) with descriptions and permissions.
@@ -1667,7 +1671,8 @@ class RoleViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="assign-admin")
     def assign_admin(self, request, pk=None):
         role = self.get_object()
-        email = request.data.get("email")
+        email = request.data.get("email", "").strip()
+
         if not email:
             return Response(
                 {
@@ -1701,8 +1706,8 @@ class RoleViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="invite-admin")
     def invite_admin(self, request, pk=None):
         role = self.get_object()
-        email = request.data.get("email")
-        name = request.data.get("name", "")
+        email = request.data.get("email", "").strip()
+        name = request.data.get("name", "").strip()
 
         service = RoleInvitationService(
             email=email,
@@ -1735,7 +1740,7 @@ class RoleViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="remove-admin")
     def remove_admin(self, request, pk=None):
         role = self.get_object()
-        email = request.data.get("email")
+        email = request.data.get("email", "").strip()
 
         if not email:
             return Response(
@@ -1781,7 +1786,7 @@ class AcceptInvitationView(APIView):
 
     @accept_invitation_schema
     def post(self, request):
-        email = request.data.get("email")
+        email = request.data.get("email", "").strip()
         token = request.data.get("token")
         password = request.data.get("password")
 
@@ -1898,17 +1903,39 @@ class SuperAdminViewSet(viewsets.ReadOnlyModelViewSet):
         Transfer superadmin role to another user.
         Options:
         - Promote user to superadmin
-        - Downgrade or revoke current superadmin
+        - Downgrade or revoke current superadmin based on `transfer_action`
         """
-        target_email = request.data.get("email")
-        downgrade_to_role_id = request.data.get("downgrade_to_role_id")
-        revoke = request.data.get("revoke", False)
+        target_email = request.data.get("email", "").strip()
+        transfer_action = request.data.get("transfer_action", "").strip()
+        new_role_id_raw= request.data.get("new_role_id")
 
         if not target_email:
             return Response(
                 {"message": "Target user email is required.", "error": True},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+        if transfer_action not in ["change_role", "remove_access"]:
+            return Response(
+                {"message": "Invalid transfer_action. Must be 'change_role' or 'remove_access'.", "error": True},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if transfer_action == "change_role":
+            if new_role_id_raw is None:
+                return Response(
+                    {"message": "new_role_id is required when transfer_action is 'change_role'.", "error": True},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            try:
+                new_role_id = int(new_role_id_raw)
+            except (ValueError, TypeError):
+                return Response(
+                    {"message": "new_role_id must be an integer.", "error": True},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        else:
+            new_role_id = None
 
         try:
             target_user = User.objects.get(email=target_email)
@@ -1928,19 +1955,19 @@ class SuperAdminViewSet(viewsets.ReadOnlyModelViewSet):
         target_user.save()
 
         current_user = request.user
-        if downgrade_to_role_id:
+        current_user.is_superuser = False
+
+        if transfer_action == "change_role":
             try:
-                role = Role.objects.get(id=downgrade_to_role_id)
+                role = Role.objects.get(id=new_role_id)
             except Role.DoesNotExist:
                 return Response(
                     {"message": "Specified role does not exist.", "error": True},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            current_user.is_superuser = False
             role.assign_user(current_user)
 
-        elif revoke:
-            current_user.is_superuser = False
+        elif transfer_action == "remove_access":
             current_user.groups.clear()
 
         current_user.save()
@@ -1956,24 +1983,65 @@ class SuperAdminViewSet(viewsets.ReadOnlyModelViewSet):
     @super_admin_invite_schema
     @action(detail=False, methods=["post"], url_path="invite")
     def invite(self, request):
-        email = request.data.get("email")
-        name = request.data.get("name", "")
+        target_email = request.data.get("email", "").strip()
+        target_name = request.data.get("name", "").strip()
+        transfer_action = request.data.get("transfer_action", "").strip()
+        new_role_id_raw = request.data.get("new_role_id")
+
+        if not target_email:
+            return Response(
+                {"message": "Target user email is required.", "error": True},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not target_name:
+            return Response(
+                {"message": "Target name is required.", "error": True},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if transfer_action not in ["change_role", "remove_access"]:
+            return Response(
+                {"message": "Invalid transfer_action. Must be 'change_role' or 'remove_access'.", "error": True},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if transfer_action == "change_role":
+            if new_role_id_raw is None:
+                return Response(
+                    {"message": "new_role_id is required when transfer_action is 'change_role'.", "error": True},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            try:
+                new_role_id = int(new_role_id_raw)
+            except (ValueError, TypeError):
+                return Response(
+                    {"message": "new_role_id must be an integer.", "error": True},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        else:
+            new_role_id = None
 
         try:
-            role = Role.objects.get(name__iexact="Super Admin")
+            superadmin_role = Role.objects.get(name__iexact="Super Admin")
         except Role.DoesNotExist:
-            return Response({"message": "Superadmin role not found.", "error": True}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response(
+                {"message": "Superadmin role not found.", "error": True},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
         try:
             service = RoleInvitationService(
-                email=email,
-                name=name,
-                role=role,
+                email=target_email,
+                name=target_name,
+                role=superadmin_role,
                 invited_by=request.user,
-                request=request
+                request=request,
+                transfer_action=transfer_action,
+                new_role_id=new_role_id
             )
 
-            service.send
+            service.send()
         except MissingEmailError as e:
             return Response(
                 {"message": str(e), "error": True},
@@ -1985,10 +2053,25 @@ class SuperAdminViewSet(viewsets.ReadOnlyModelViewSet):
                 status=status.HTTP_409_CONFLICT
             )
 
+        current_user = request.user
+        current_user.is_superuser = False
+
+        if transfer_action == "change_role":
+            try:
+                new_role = Role.objects.get(id=new_role_id)
+            except Role.DoesNotExist:
+                return Response(
+                    {"message": "Specified role does not exist.", "error": True},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            new_role.assign_user(current_user)
+
+        elif transfer_action == "remove_access":
+            current_user.groups.clear()
+
+        current_user.save()
+
         return Response(
             {"message": "Invitation sent successfully.", "error": False},
             status=status.HTTP_201_CREATED
         )
-
-
-# check figma if invite does it disable current SU
