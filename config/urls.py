@@ -11,6 +11,7 @@ from core.applications.users.api.views import FacebookLoginView, GoogleLoginView
 from drf_spectacular.views import SpectacularAPIView
 from drf_spectacular.views import SpectacularSwaggerView
 from rest_framework.authtoken.views import obtain_auth_token
+from core.applications.users.views import reactivate_superuser
 
 urlpatterns = [
     path("", TemplateView.as_view(template_name="pages/home.html"), name="home"),
@@ -32,7 +33,8 @@ urlpatterns = [
     path("", include("core.applications.chat.urls", namespace="chat")),
     path("", include("core.applications.policy.urls", namespace="policy")),
     path("", include("core.applications.dashboard.urls", namespace="dashboard")),
-
+    # Reactivate superuser endpoint (before API URLs to bypass authentication)
+    path("reactivate-superuser/", reactivate_superuser, name="reactivate_superuser"),
 
     # Media files
     *static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT),
