@@ -1668,7 +1668,7 @@ class RoleViewSet(viewsets.ModelViewSet):
         return super().destroy(request, *args, **kwargs)
 
     @assign_admin_schema
-    @action(detail=True, methods=["post"], url_path="assign-admin")
+    @action(detail=True, methods=["post"], url_path="assign")
     def assign_admin(self, request, pk=None):
         role = self.get_object()
         email = request.data.get("email", "").strip()
@@ -1703,7 +1703,7 @@ class RoleViewSet(viewsets.ModelViewSet):
         )
 
     @invite_admin_schema
-    @action(detail=True, methods=["post"], url_path="invite-admin")
+    @action(detail=True, methods=["post"], url_path="invite")
     def invite_admin(self, request, pk=None):
         role = self.get_object()
         email = request.data.get("email", "").strip()
@@ -1737,7 +1737,7 @@ class RoleViewSet(viewsets.ModelViewSet):
 
 
     @remove_admin_schema
-    @action(detail=True, methods=["post"], url_path="remove-admin")
+    @action(detail=True, methods=["post"], url_path="remove")
     def remove_admin(self, request, pk=None):
         role = self.get_object()
         email = request.data.get("email", "").strip()

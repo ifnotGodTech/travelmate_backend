@@ -38,7 +38,7 @@ router.register("superadmin", SuperAdminViewSet, basename="superadmin")
 app_name = f"{PREFIX}"
 urlpatterns = router.urls
 urlpatterns += [
-    path("permissions/grouped/", GroupedPermissionsView.as_view(), name="grouped-permissions"),
+    path("permissions/", GroupedPermissionsView.as_view(), name="grouped-permissions"),
     path("invitation/accept/", AcceptInvitationView.as_view(), name="invitation-accept"),
     path("invitation/validate/", ValidateInvitationTokenView.as_view(), name="invitation-validate"),
 
