@@ -4,6 +4,9 @@ from channels.db import database_sync_to_async
 from django.contrib.auth import get_user_model
 from django.conf import settings
 from .models import ChatSession, ChatMessage
+import base64
+from django.core.files.base import ContentFile
+import uuid
 
 User = get_user_model()
 
@@ -239,13 +242,30 @@ class ChatConsumer(AsyncWebsocketConsumer):
             session.status = 'WAITING'
             session.save()
 
-        # Create the message
+        # Create the message first without attachment
         chat_message = ChatMessage.objects.create(
             session=session,
             sender=user,
-            content=message,
-            attachment=attachment
+            content=message
         )
+
+        # Handle attachment if provided
+        if attachment:
+            try:
+                # Extract the base64 data
+                format, filedata = attachment.split(';base64,')
+                ext = format.split('/')[-1]
+
+                # Generate a unique filename
+                filename = f"{uuid.uuid4()}.{ext}"
+
+                # Decode and save the file
+                data = ContentFile(base64.b64decode(filedata), name=filename)
+                chat_message.attachment.save(filename, data, save=True)
+            except Exception as e:
+                print(f"Error saving attachment: {str(e)}")
+                # If there's an error with the attachment, we'll still save the message
+                pass
 
         # Update read status
         if user.is_staff:
@@ -253,11 +273,18 @@ class ChatConsumer(AsyncWebsocketConsumer):
         else:
             ChatMessage.objects.filter(session=session, sender__is_staff=True, is_read=False).update(is_read=True)
 
-        # Return message data
+        # Return message data with safe attachment URL handling
+        attachment_url = None
+        if chat_message.attachment:
+            try:
+                attachment_url = chat_message.attachment.url
+            except Exception as e:
+                print(f"Error getting attachment URL: {str(e)}")
+
         return {
             'id': chat_message.id,
             'created_at': chat_message.created_at,
-            'attachment': chat_message.attachment.url if chat_message.attachment else None
+            'attachment': attachment_url
         }
 
     @database_sync_to_async
