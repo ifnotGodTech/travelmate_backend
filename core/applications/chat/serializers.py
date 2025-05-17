@@ -1,8 +1,9 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.conf import settings
-from .models import ChatSession, ChatMessage, ChatAttachment
+from .models import ChatSession, ChatMessage
 from drf_spectacular.utils import extend_schema_field
+import os
 
 User = get_user_model()
 
@@ -42,29 +43,36 @@ class UserSerializer(serializers.ModelSerializer):
         except:
             return f'{settings.STATIC_URL}images/avatar.png'
 
-class ChatAttachmentSerializer(serializers.ModelSerializer):
-    file_url = serializers.SerializerMethodField()
-
-    class Meta:
-        model = ChatAttachment
-        fields = ['id', 'file', 'file_url', 'file_name', 'file_type', 'file_size', 'created_at']
-        read_only_fields = ['file_url', 'file_name', 'file_type', 'file_size', 'created_at']
-
-    @extend_schema_field(str)
-    def get_file_url(self, obj):
-        request = self.context.get('request')
-        if obj.file and hasattr(obj.file, 'url'):
-            return request.build_absolute_uri(obj.file.url) if request else obj.file.url
-        return None
-
 class ChatMessageSerializer(serializers.ModelSerializer):
     sender_info = UserSerializer(source='sender', read_only=True)
-    attachments = ChatAttachmentSerializer(many=True, read_only=True)
+    attachment_url = serializers.SerializerMethodField()
 
     class Meta:
         model = ChatMessage
-        fields = ['id', 'session', 'sender', 'sender_info', 'content', 'is_read', 'created_at', 'attachments']
-        read_only_fields = ['is_read', 'created_at']
+        fields = ['id', 'session', 'sender', 'sender_info', 'content', 'attachment', 'attachment_url', 'is_read', 'created_at']
+        read_only_fields = ['is_read', 'created_at', 'attachment_url']
+
+    @extend_schema_field(str)
+    def get_attachment_url(self, obj):
+        request = self.context.get('request')
+        if obj.attachment and hasattr(obj.attachment, 'url'):
+            return request.build_absolute_uri(obj.attachment.url) if request else obj.attachment.url
+        return None
+
+    def validate_attachment(self, value):
+        if value:
+            # Limit file size (10MB)
+            if value.size > 10485760:
+                raise serializers.ValidationError("File size too large. Max size is 10MB.")
+
+            # Validate file extensions
+            valid_extensions = ['.pdf', '.doc', '.docx', '.jpg', '.jpeg', '.png']
+            ext = os.path.splitext(value.name)[1].lower()
+            if ext not in valid_extensions:
+                raise serializers.ValidationError(
+                    f"Unsupported file type. Allowed types: {', '.join(valid_extensions)}"
+                )
+        return value
 
     def create(self, validated_data):
         session = validated_data.get('session')
@@ -125,7 +133,7 @@ class ChatSessionSerializer(serializers.ModelSerializer):
                 'content': last_msg.content,
                 'sender': sender_info,
                 'created_at': last_msg.created_at,
-                'has_attachments': last_msg.attachments.exists()
+                'has_attachment': bool(last_msg.attachment)
             }
         return None
 
