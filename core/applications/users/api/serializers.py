@@ -3,6 +3,7 @@ from typing import Literal
 from django.utils.module_loading import import_string
 from django.contrib.auth import authenticate
 from django.contrib.auth import user_logged_in
+from django.contrib.auth.models import Group, Permission
 from django.contrib.auth.models import update_last_login
 from django.contrib.auth.password_validation import validate_password
 from django.core import exceptions as django_exceptions
@@ -21,7 +22,7 @@ from django.core.cache import cache
 from django.conf import settings as django_settings
 
 from core.applications.users.managers import OTPManager
-from core.applications.users.models import Profile, User
+from core.applications.users.models import Profile, User, Role
 from core.applications.users.token import default_token_generator
 from core.helpers.custom_exceptions import CustomError
 from core.helpers.interface import BaseModelNoDefs
@@ -768,3 +769,77 @@ class SuperUserTokenObtainPairSerializer(TokenObtainPairSerializer):
                 "Only superusers are allowed to authenticate."
             )
         return data
+
+class PermissionSerializer(serializers.ModelSerializer):
+    group = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Permission
+        fields = ["id", "codename", "name", "group"]
+
+    def get_group(self, obj):
+        if obj.codename.startswith("view_booking") or "booking" in obj.codename:
+            return "Booking Management"
+        elif "customer" in obj.codename:
+            return "Customer Data"
+        elif "payment" in obj.codename:
+            return "Payment Information"
+        elif "content" in obj.codename:
+            return "Content Management"
+        return "Other"
+
+
+class RoleSerializer(serializers.ModelSerializer):
+    permissions = PermissionSerializer(many=True, read_only=True)
+    permission_ids = serializers.PrimaryKeyRelatedField(
+        queryset=Permission.objects.all(),
+        many=True,
+        write_only=True,
+        source="permissions"
+    )
+    description = serializers.CharField(required=False, allow_blank=True)
+    assigned_users = serializers.SerializerMethodField()
+    invited_users = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Role
+        fields = [
+            "id",
+            "name",
+            "description",
+            "created_by",
+            "invited_users",
+            "assigned_users",
+            "permissions",
+            "permission_ids"
+        ]
+        read_only_fields = ["created_by"]
+
+    def get_assigned_users(self, obj):
+        return [
+            {"id": user.id, "name": user.name, "email": user.email}
+            for user in obj.user_set.all()
+        ]
+
+    def get_invited_users(self, obj):
+        invitations = obj.invitations.filter(accepted_at__isnull=True)
+        return [
+            {"email": invite.email, "name": invite.name,}
+            for invite in invitations
+        ]
+
+
+class SuperAdminSerializer(serializers.ModelSerializer):
+    """
+    Serializer for superadmin’s details.
+    """
+    class Meta:
+        model = User
+        fields = [
+            "id",
+            "email",
+            "name",
+            "is_active",
+            "is_superuser"
+        ]
+        read_only_fields = fields

@@ -58,3 +58,32 @@ class UsernameResetEmail(ActivationEmail):
         user = context.get("user")
         context["token"] = default_token_generator.make_token(user)
         return context
+
+class RoleInvitationEmail(BaseEmailMessage):
+    template_name = "email/role_invitation.html"
+
+    def get_context_data(self):
+        context = super().get_context_data()
+        name = self.context.get("name", "")
+        email = self.context.get("email")
+        role = self.context.get("role")
+        token = self.context.get("token")
+
+        if not all([email, role, token]):
+            raise ValueError("Missing required context data for RoleInvitationEmail")
+        context.update({
+            "token": token,
+            "email": email,
+            "name": name,
+            "role": role,
+            "site_name": settings.SITE_NAME,
+        })
+
+        request = self.context.get("request")
+        if request:
+            base_url = f"{request.scheme}://{request.get_host()}"
+        else:
+            base_url = getattr(settings, "FRONTEND_URL", "http://localhost:8000")
+
+        context["invitation_link"] = f"{base_url}/invitation/accept/?token={token}"
+        return context

@@ -2,7 +2,8 @@ from core.applications.users.api.serializers import(
      AdminRegistrationSerializer, AdminUserDetailSerializer, AdminUserSerializer,
      BulkDeleteUserSerializer,
      EmailAndTokenSerializer, EmailSubmissionSerializer,
-     OTPVerificationSerializer, PasswordSetSerializer, SoftDeletedUserSerializer
+     OTPVerificationSerializer, PasswordSetSerializer, SoftDeletedUserSerializer,
+     RoleSerializer,
 )
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from drf_spectacular.utils import OpenApiParameter, OpenApiExample, OpenApiTypes, OpenApiResponse
@@ -306,3 +307,351 @@ make_admin_schema = extend_schema(
     description="Promote a user to admin (is_staff=True). Only superusers can do this.",
     responses={200: OpenApiResponse(description="User promoted to admin")}
 )
+
+admin_grouped_permissions_schema = extend_schema(
+    summary="Retrieve grouped permissions",
+    description="Returns all Django permissions grouped by their app label. Accessible only by superadmins.",
+    responses={
+        200: {
+            "type": "object",
+            "description": "Grouped permissions data",
+            "example": {
+                "auth": [
+                    {"id": 1, "name": "Can add user", "codename": "add_user"},
+                    {"id": 2, "name": "Can change user", "codename": "change_user"},
+                ],
+                "blog": [
+                    {"id": 10, "name": "Can add post", "codename": "add_post"},
+                ]
+            }
+        },
+        403: {
+            "description": "Permission denied if user is not superadmin"
+        }
+    }
+)
+
+create_role_schema = extend_schema(
+    summary="Create a new role",
+    description="Create a role with a name, description, and associated permissions.",
+    request={"application/json": RoleSerializer},
+    responses={
+        201: RoleSerializer,
+        400: {"description": "Validation errors on role data"},
+    }
+)
+
+delete_role_schema = extend_schema(
+    summary="Delete a role",
+    description="Delete a role if it has no assigned users. Otherwise, returns an error.",
+    responses={
+        204: {"description": "Role deleted successfully"},
+        400: {
+            "description": "Cannot delete a role with assigned users",
+            "example": {"message": "Cannot delete a role with assigned users.", "error": True}
+        }
+    }
+)
+
+assign_admin_schema = extend_schema(
+    summary="Assign user to role",
+    description="Assign an existing user to the specified role by providing the user's email.",
+    request={
+        "application/json": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string",
+                    "format": "email",
+                    "description": "Email of the user to assign"
+                }
+            },
+            "required": ["email"],
+            "example": {
+                "email": "user@example.com"
+            }
+        }
+    },
+    responses={
+        200: {
+            "description": "User assigned to role successfully",
+            "example": {
+                "message": "User user@example.com assigned to role Admin.",
+                "error": False
+            }
+        },
+        400: {
+            "description": "Missing email in request",
+            "example": {
+                "message": "Email is required.",
+                "error": True
+            }
+        },
+        404: {
+            "description": "User not found",
+            "example": {
+                "message": "User with this email does not exist.",
+                "error": True
+            }
+        }
+    }
+)
+
+invite_admin_schema =  extend_schema(
+    summary="Invite admin by email",
+    description=(
+        "Invite a new user to the admin dashboard by sending an invitation email. "
+        "If the email has already been invited and not accepted, the request will fail. "
+        "Only superadmins can perform this action."
+    ),
+    request={
+        "application/json": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string",
+                    "format": "email",
+                    "description": "Email of the invited user"
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Name of the invited user (optional)"
+                }
+            },
+            "required": ["email"],
+            "example": {
+                "email": "invitee@example.com",
+                "name": "John Doe"
+            }
+        }
+    },
+    responses={
+        201: {
+            "description": "Invitation sent successfully",
+            "example": {
+                "message": "Invitation sent successfully.",
+                "error": False
+            }
+        },
+        400: {
+            "description": "Missing email in request",
+            "example": {
+                "message": "Email is required.",
+                "error": True
+            }
+        },
+        409: {
+            "description": "An invitation for this email is already pending",
+            "example": {
+                "message": "An invitation for this email is already pending.",
+                "error": True
+            }
+        }
+    }
+)
+
+remove_admin_schema = extend_schema(
+    summary="Remove a user from a role",
+    description=(
+        "Remove an existing user from the specified role by their email address. "
+        "Only superadmins can perform this action. "
+        "If the user is not part of the role, an error will be returned."
+    ),
+    request={
+        "application/json": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string",
+                    "format": "email",
+                    "description": "Email address of the user to remove from the role"
+                }
+            },
+            "required": ["email"],
+            "example": {
+                "email": "user_to_remove@example.com"
+            }
+        }
+    },
+    responses={
+        200: {
+            "description": "User removed successfully from the role",
+            "example": {
+                "message": "User user_to_remove@example.com has been removed from the role 'Admin'.",
+                "error": False
+            }
+        },
+        400: {
+            "description": "User is not a member of this role or invalid input",
+            "example": {
+                "message": "User user_to_remove@example.com is not part of the role.",
+                "error": True
+            }
+        },
+        404: {
+            "description": "User with the provided email does not exist",
+            "example": {
+                "message": "User with email user_to_remove@example.com does not exist.",
+                "error": True
+            }
+        }
+    }
+)
+
+accept_invitation_schema = extend_schema(
+        summary="Accept Invitation",
+        description="Accepts an admin invitation using the provided email, token, and sets a new password.",
+        request=OpenApiTypes.OBJECT,
+        examples=[
+            OpenApiExample(
+                "Accept Invitation Request Example",
+                value={
+                    "email": "user@example.com",
+                    "token": "your-token-here",
+                    "password": "NewSecurePassword123!"
+                },
+                request_only=True,
+            ),
+            OpenApiExample(
+                "Successful Response",
+                value={
+                    "message": "Invitation accepted, password set, and role assigned.",
+                    "error": False
+                },
+                response_only=True
+            ),
+            OpenApiExample(
+                "Error Response - Missing Fields",
+                value={
+                    "message": "Email, token, and password are required.",
+                    "error": True
+                },
+                response_only=True
+            ),
+        ],
+        responses={
+            200: OpenApiResponse(description="Invitation accepted and user activated."),
+            400: OpenApiResponse(description="Missing/invalid data or token."),
+            404: OpenApiResponse(description="Invitation not found or already accepted."),
+        }
+    )
+
+validate_invitation_schema = extend_schema(
+    summary="Validate Invitation Token",
+    description="Check if the invitation token is valid, not expired, and has not already been used.",
+    parameters=[
+        OpenApiParameter(
+            name="token",
+            type=str,
+            location=OpenApiParameter.QUERY,
+            required=True,
+            description="The invitation token to be validated.",
+        )
+    ],
+    examples=[
+        OpenApiExample(
+            "Valid Token Example",
+            value={"token": "sample-valid-token"},
+            request_only=True
+        ),
+        OpenApiExample(
+            "Success Response",
+            value={
+                "message": "Token is valid.",
+                "email": "invited-user@example.com",
+                "error": False
+            },
+            response_only=True
+        ),
+        OpenApiExample(
+            "Expired/Invalid Token",
+            value={
+                "message": "Invalid or expired token.",
+                "error": True
+            },
+            response_only=True
+        ),
+        OpenApiExample(
+            "Token Already Used",
+            value={
+                "message": "This invitation has already been used.",
+                "error": True
+            },
+            response_only=True
+        )
+    ],
+    responses={
+        200: OpenApiResponse(description="Token is valid."),
+        400: OpenApiResponse(description="Missing, invalid or already-used token."),
+    }
+)
+
+super_admin_view_schema = extend_schema_view(
+    list=extend_schema(
+        summary="List superadmins",
+        description="Retrieve a list of all users with superadmin privileges.",
+        responses={200: OpenApiResponse(description="List of superadmins")}
+    ),
+    retrieve=extend_schema(
+        summary="Retrieve superadmin",
+        description="Get detailed information about a specific superadmin.",
+        responses={200: AdminUserDetailSerializer}
+    )
+)
+
+super_admin_transfer_schema = extend_schema(
+    methods=["POST"],
+    operation_id="transfer_superadmin_privilege",
+    summary="Transfer Superadmin Privilege",
+    description=(
+        "Transfer superadmin rights to another existing user (must not already be a superadmin). "
+        "Current superadmin can either revoke their own access entirely or downgrade to a role."
+    ),
+    request={
+        "application/json": {
+            "type": "object",
+            "properties": {
+                "email": {"type": "string", "format": "email"},
+                "downgrade_to_role_id": {"type": "integer"},
+                "revoke": {"type": "boolean"}
+            },
+            "required": ["email"]
+        }
+    },
+    responses={
+        200: OpenApiExample(
+            "Successful Transfer",
+            value={
+                "message": "Superadmin privileges transferred to newadmin@example.com.",
+                "error": False
+            },
+            status_codes=["200"]
+        ),
+        400: OpenApiExample(
+            "Invalid request",
+            value={"message": "Target user email is required.", "error": True},
+            status_codes=["400"]
+        ),
+        404: OpenApiExample(
+            "User not found",
+            value={"message": "User with this email does not exist.", "error": True},
+            status_codes=["404"]
+        )
+    },
+)
+
+super_admin_invite_schema = extend_schema(
+        methods=["POST"],
+        summary="Invite a Superadmin",
+        description="Send an invitation email to promote a new superadmin by email.",
+        request={
+            "application/json": {
+                "type": "object",
+                "properties": {
+                    "email": {"type": "string", "format": "email"},
+                    "name": {"type": "string"}
+                },
+                "required": ["email"]
+            }
+        }
+    )

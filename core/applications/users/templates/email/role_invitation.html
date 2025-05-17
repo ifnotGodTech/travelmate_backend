@@ -1,0 +1,43 @@
+{% load i18n %}
+
+{% block subject %}
+  {% blocktrans %}Invitation to join {{ site_name }} as a {{ role }}{% endblocktrans %}
+{% endblock subject %}
+
+{% block text_body %}
+  {% blocktrans %}Hello {{ name }},{% endblocktrans %}
+
+  {% blocktrans %}You are receiving this email because you have been invited to join {{ site_name }} as a {{ role }}.{% endblocktrans %}
+
+  <p>{% trans "Please click the link below to accept your invitation and set your password:" %}</p>
+  <p>{{ invitation_link }}</p>
+
+  <p>{% blocktrans %}This invitation will expire in 7 days.{% endblocktrans %}</p>
+
+  <p>{% trans "If you did not expect this invitation, please ignore this email." %}</p>
+
+  <p>{% blocktrans %}Thanks for using {{ site_name }}!{% endblocktrans %}</p>
+  <p>{% blocktrans %}The {{ site_name }} team{% endblocktrans %}</p>
+{% endblock text_body %}
+
+{% block html_body %}
+    <h2>{% blocktrans %}Hello {{ name }},{% endblocktrans %}</h2>
+  <p>
+    {% blocktrans %}You are receiving this email because you have been invited to join {{ site_name }} as a {{ role }}.{% endblocktrans %}
+  </p>
+
+  <p>{% trans "Please click the button below to accept your invitation and set your password:" %}</p>
+
+  <p style="text-align:center; margin: 20px 0;">
+    <a href="{{ invitation_link }}" style="background-color:#007bff; color:#fff; padding:10px 20px; text-decoration:none; border-radius:4px;">
+      {% trans "Accept Invitation" %}
+    </a>
+  </p>
+
+  <p>{% blocktrans %}This invitation will expire in 7 days.{% endblocktrans %}</p>
+
+  <p>{% trans "If you did not expect this invitation, please ignore this email." %}</p>
+
+  <p>{% blocktrans %}Thanks for using {{ site_name }}!{% endblocktrans %}</p>
+  <p>{% blocktrans %}The {{ site_name }} team{% endblocktrans %}</p>
+{% endblock html_body %}
