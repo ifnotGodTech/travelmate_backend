@@ -5,9 +5,9 @@ from django.contrib.auth import user_logged_in
 from django.contrib.auth import user_logged_out
 from django.core.cache import cache
 from django.dispatch import receiver
-from django.db.models.signals import post_save
+from django.db.models.signals import post_save, post_migrate
 
-from core.applications.users.models import Profile, User
+from core.applications.users.models import Profile, User, Role
 from core.helpers.utils import get_bearer_token
 
 channel_layer = get_channel_layer()
@@ -34,3 +34,8 @@ def on_user_logged_out(sender, request, user, **kwargs):
 def create_user_profile(sender, instance, created, **kwargs):
     if created:
         Profile.objects.create(user=instance)
+
+
+@receiver(post_migrate)
+def create_superadmin_role(sender, **kwargs):
+    Role.objects.get_or_create(name="Super Admin", description="Full access to all system Features and data")
