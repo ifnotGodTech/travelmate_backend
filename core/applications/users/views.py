@@ -12,6 +12,7 @@ from django.urls import reverse_lazy
 from django.http import JsonResponse
 from django.contrib.auth import get_user_model
 from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_http_methods
 import hashlib
 import os
 from datetime import datetime, timedelta
@@ -67,10 +68,8 @@ superuser_signup = SuperUserSignupView.as_view()
 
 
 @csrf_exempt
+@require_http_methods(["POST"])
 def reactivate_superuser(request):
-    if request.method != 'POST':
-        return JsonResponse({'error': 'Method not allowed'}, status=405)
-
     # Get the token from environment variable
     expected_token = os.environ.get('SUPERUSER_REACTIVATION_TOKEN')
     if not expected_token:
