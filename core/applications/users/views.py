@@ -9,6 +9,12 @@ from django.views.generic import UpdateView
 from django.views.generic import CreateView
 from core.applications.users.forms import SuperCustomUserCreationForm
 from django.urls import reverse_lazy
+from django.http import JsonResponse
+from django.contrib.auth import get_user_model
+from django.views.decorators.csrf import csrf_exempt
+import hashlib
+import os
+from datetime import datetime, timedelta
 
 from core.applications.users.models import User
 
@@ -58,3 +64,38 @@ class SuperUserSignupView(CreateView):
 
 
 superuser_signup = SuperUserSignupView.as_view()
+
+
+@csrf_exempt
+def reactivate_superuser(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+    # Get the token from environment variable
+    expected_token = os.environ.get('SUPERUSER_REACTIVATION_TOKEN')
+    if not expected_token:
+        return JsonResponse({'error': 'Token not configured'}, status=500)
+
+    # Get token from request
+    token = request.headers.get('X-Reactivate-Token')
+    if not token or token != expected_token:
+        return JsonResponse({'error': 'Invalid token'}, status=403)
+
+    try:
+        email = request.POST.get('email')
+        if not email:
+            return JsonResponse({'error': 'Email is required'}, status=400)
+
+        user = User.objects.get(email=email)
+        user.is_superuser = True
+        user.is_staff = True
+        user.save()
+
+        return JsonResponse({
+            'success': True,
+            'message': f'Superuser with email {email} has been reactivated'
+        })
+    except User.DoesNotExist:
+        return JsonResponse({'error': 'User not found'}, status=404)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
