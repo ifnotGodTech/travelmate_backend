@@ -46,16 +46,13 @@ def notify_new_message(sender, instance, created, **kwargs):
                     'profile_pics': f'{settings.STATIC_URL}images/avatar.png'
                 }
 
-        # Get attachments data
-        attachments_data = []
-        for attachment in instance.attachments.all():
-            attachments_data.append({
-                'id': attachment.id,
-                'file_name': attachment.file_name,
-                'file_type': attachment.file_type,
-                'file_size': attachment.file_size,
-                'file_url': attachment.file.url if attachment.file else None
-            })
+        # Get attachment data
+        attachment_data = None
+        if instance.attachment:
+            attachment_data = {
+                'file_name': instance.attachment.name,
+                'file_url': instance.attachment.url if instance.attachment else None
+            }
 
         # Notify the chat room
         async_to_sync(channel_layer.group_send)(
@@ -71,7 +68,7 @@ def notify_new_message(sender, instance, created, **kwargs):
                 'is_staff': instance.sender.is_staff,
                 'created_at': instance.created_at.isoformat(),
                 'assigned_admin': assigned_admin_data,
-                'attachments': attachments_data
+                'attachment': attachment_data
             }
         )
 

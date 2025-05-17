@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.utils.html import format_html
 from django.urls import reverse
-from .models import ChatSession, ChatMessage, ChatAttachment
+from .models import ChatSession, ChatMessage
 from django.conf import settings
 from allauth.account.decorators import secure_admin_login
 from django.utils.translation import gettext_lazy as _
@@ -16,7 +16,7 @@ if settings.DJANGO_ADMIN_FORCE_ALLAUTH:
 class ChatMessageInline(admin.TabularInline):
     model = ChatMessage
     extra = 0
-    readonly_fields = ('sender', 'content', 'is_read', 'created_at')
+    readonly_fields = ('sender', 'content', 'is_read', 'created_at', 'get_attachment')
     can_delete = False
 
     def has_add_permission(self, request, obj=None):
@@ -24,6 +24,15 @@ class ChatMessageInline(admin.TabularInline):
 
     def has_change_permission(self, request, obj=None):
         return False
+
+    @admin.display(
+        description='Attachment'
+    )
+    def get_attachment(self, obj):
+        if obj.attachment:
+            return format_html('<a href="{}" target="_blank">{}</a>', obj.attachment.url, obj.attachment.name)
+        return "No attachment"
+
 
 @admin.register(ChatSession)
 class ChatSessionAdmin(admin.ModelAdmin):
@@ -34,6 +43,7 @@ class ChatSessionAdmin(admin.ModelAdmin):
     raw_id_fields = ('user', 'assigned_admin')
     date_hierarchy = 'created_at'
     ordering = ('-created_at',)
+    inlines = [ChatMessageInline]
 
     @admin.display(
         description='Messages'
@@ -59,10 +69,10 @@ class ChatSessionAdmin(admin.ModelAdmin):
 
 @admin.register(ChatMessage)
 class ChatMessageAdmin(admin.ModelAdmin):
-    list_display = ('id', 'session', 'sender', 'is_staff_sender', 'content_preview', 'is_read', 'created_at')
+    list_display = ('id', 'session', 'sender', 'is_staff_sender', 'content_preview', 'is_read', 'created_at', 'get_attachment')
     list_filter = ('is_read', 'created_at', 'sender__is_staff')
     search_fields = ('content', 'sender__username', 'sender__email', 'session__title')
-    readonly_fields = ('created_at', 'get_attachments')
+    readonly_fields = ('created_at', 'get_attachment')
     raw_id_fields = ('session', 'sender')
     date_hierarchy = 'created_at'
     ordering = ('-created_at',)
@@ -81,18 +91,12 @@ class ChatMessageAdmin(admin.ModelAdmin):
         return obj.sender.is_staff
 
     @admin.display(
-        description='Attachments'
+        description='Attachment'
     )
-    def get_attachments(self, obj):
-        attachments = obj.attachments.all()
-        if not attachments:
-            return "No attachments"
-
-        html = '<ul>'
-        for attachment in attachments:
-            html += f'<li><a href="{attachment.file.url}" target="_blank">{attachment.file_name}</a> ({attachment.file_type}, {attachment.file_size} bytes)</li>'
-        html += '</ul>'
-        return format_html(html)
+    def get_attachment(self, obj):
+        if obj.attachment:
+            return format_html('<a href="{}" target="_blank">{}</a>', obj.attachment.url, obj.attachment.name)
+        return "No attachment"
 
     def get_queryset(self, request):
         qs = super().get_queryset(request)
@@ -106,34 +110,3 @@ class ChatMessageAdmin(admin.ModelAdmin):
             return True
         # Only superusers or assigned admins can modify messages
         return request.user.is_superuser or obj.session.assigned_admin == request.user
-
-@admin.register(ChatAttachment)
-class ChatAttachmentAdmin(admin.ModelAdmin):
-    list_display = ('id', 'message', 'file_name', 'file_type', 'file_size', 'created_at')
-    list_filter = ('file_type', 'created_at')
-    search_fields = ('file_name', 'message__content', 'message__sender__username')
-    readonly_fields = ('created_at', 'file_preview')
-    raw_id_fields = ('message',)
-    date_hierarchy = 'created_at'
-    ordering = ('-created_at',)
-
-    @admin.display(
-        description='Preview'
-    )
-    def file_preview(self, obj):
-        if obj.file:
-            return format_html('<a href="{}" target="_blank">View File</a>', obj.file.url)
-        return "No file"
-
-    def get_queryset(self, request):
-        qs = super().get_queryset(request)
-        if not request.user.is_superuser:
-            # Non-superusers can only see attachments from sessions they are assigned to
-            return qs.filter(message__session__assigned_admin=request.user)
-        return qs
-
-    def has_change_permission(self, request, obj=None):
-        if obj is None:
-            return True
-        # Only superusers or assigned admins can modify attachments
-        return request.user.is_superuser or obj.message.session.assigned_admin == request.user

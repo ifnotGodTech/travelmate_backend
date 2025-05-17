@@ -12,8 +12,8 @@ from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
-from .models import ChatSession, ChatMessage, ChatAttachment
-from .serializers import ChatSessionSerializer, ChatSessionDetailSerializer, ChatMessageSerializer, UserSerializer, ChatAttachmentSerializer
+from .models import ChatSession, ChatMessage
+from .serializers import ChatSessionSerializer, ChatSessionDetailSerializer, ChatMessageSerializer, UserSerializer
 from core.applications.users.models import User
 from rest_framework.parsers import MultiPartParser, FormParser
 
@@ -403,7 +403,7 @@ class AdminChatSessionViewSet(mixins.ListModelMixin,
 @extend_schema_view(
     create=extend_schema(
         summary="Send a chat message",
-        description="""Sends a new message in a chat session with optional file attachments.
+        description="""Sends a new message in a chat session with optional file attachment.
 
         For users:
         - Can only send messages to their own sessions
@@ -414,9 +414,11 @@ class AdminChatSessionViewSet(mixins.ListModelMixin,
         - If session is in WAITING status, it will be changed to ACTIVE
         - If session is closed, it will be reopened in ACTIVE status
 
-        File attachments:
-        - Multiple files can be attached to a single message
-        - Files are stored in chat_attachments/session_id/message_id/
+        File attachment:
+        - Single file can be attached to a message
+        - File is stored in chat_attachments/session_id/message_id/
+        - Max file size: 10MB
+        - Allowed file types: PDF, DOC, DOCX, JPG, JPEG, PNG
         """,
         tags=["Chat API"]
     )
@@ -453,18 +455,7 @@ class ChatMessageViewSet(mixins.CreateModelMixin,
             session.save()
 
         # Save the message with the current user as sender
-        message = serializer.save(sender=self.request.user)
-
-        # Handle file attachments
-        files = self.request.FILES.getlist('attachments')
-        for file in files:
-            ChatAttachment.objects.create(
-                message=message,
-                file=file,
-                file_name=file.name,
-                file_type=file.content_type,
-                file_size=file.size
-            )
+        serializer.save(sender=self.request.user)
 
         # Update read status
         if self.request.user.is_staff:
