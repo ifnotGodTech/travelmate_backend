@@ -353,6 +353,37 @@ delete_role_schema = extend_schema(
     }
 )
 
+role_viewset_schema = extend_schema_view(
+    list=extend_schema(
+        summary="List all roles",
+        description="Retrieve a paginated list of all roles with their permissions and assigned users.",
+        responses=RoleSerializer(many=True),
+    ),
+    retrieve=extend_schema(
+        summary="Get a single role by ID",
+        description="Retrieve detailed information about a specific role.",
+        responses=RoleSerializer,
+    ),
+    create=extend_schema(
+        summary="Create a new role",
+        description="Create a new role with a name, description, and permissions.",
+        request=RoleSerializer,
+        responses=RoleSerializer,
+    ),
+    update=extend_schema(
+        summary="Update a role (full)",
+        description="Replace all fields of a role.",
+        request=RoleSerializer,
+        responses=RoleSerializer,
+    ),
+    partial_update=extend_schema(
+        summary="Update a role (partial)",
+        description="Update one or more fields of a role.",
+        request=RoleSerializer,
+        responses=RoleSerializer,
+    )
+)
+
 assign_admin_schema = extend_schema(
     summary="Assign user to role",
     description="Assign an existing user to the specified role by providing the user's email.",
@@ -608,14 +639,30 @@ super_admin_transfer_schema = extend_schema(
         "Current superadmin can either revoke their own access entirely or downgrade to a role."
     ),
     request={
-        "application/json": {
+         "application/json": {
             "type": "object",
             "properties": {
-                "email": {"type": "string", "format": "email"},
-                "downgrade_to_role_id": {"type": "integer"},
-                "revoke": {"type": "boolean"}
+                "email": {
+                    "type": "string",
+                    "format": "email",
+                    "description": "Email of the user to tranfer superadmin role to"
+                },
+                "transfer_action": {
+                    "type": "string",
+                    "description": "What should happen to your access after current superadmin transfer the role",
+                    "enum": ["change_role", "remove_access"]
+                },
+                "new_role_id": {
+                    "type": "integer",
+                    "description": "Required if transfer_action is 'change_role'. Represents the new role's ID."
+                }
             },
-            "required": ["email"]
+            "required": ["email", "transfer_action"],
+            "example": {
+                "email": "new.superadmin@example.com",
+                "transfer_action": "change_role",
+                "new_role_id": 3
+            }
         }
     },
     responses={
@@ -641,17 +688,81 @@ super_admin_transfer_schema = extend_schema(
 )
 
 super_admin_invite_schema = extend_schema(
-        methods=["POST"],
-        summary="Invite a Superadmin",
-        description="Send an invitation email to promote a new superadmin by email.",
-        request={
-            "application/json": {
-                "type": "object",
-                "properties": {
-                    "email": {"type": "string", "format": "email"},
-                    "name": {"type": "string"}
+    summary="Invite a user to become a superadmin",
+    description="""
+    Invite a new user to become a superadmin.
+
+    If you are the current superadmin and you're transferring the role, you must also choose what happens to your own access:
+    - `"change_role"` will assign you a new role using `new_role_id`
+    - `"remove_access"` will remove your access entirely
+    """,
+    request={
+        "application/json": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string",
+                    "format": "email",
+                    "description": "Email of the user to invite as superadmin"
                 },
-                "required": ["email"]
+                "name": {
+                    "type": "string",
+                    "description": "Name of the user to tranfer superadmin role to",
+                },
+                "transfer_action": {
+                    "type": "string",
+                    "description": "What should happen to your access after current superadmin transfer the role",
+                    "enum": ["change_role", "remove_access"]
+                },
+                "new_role_id": {
+                    "type": "integer",
+                    "description": "Required if transfer_action is 'change_role'. Represents the new role's ID."
+                }
+            },
+            "required": ["email", "name", "transfer_action"],
+            "example": {
+                "email": "new.superadmin@example.com",
+                "name": "New Superadmin",
+                "transfer_action": "change_role",
+                "new_role_id": 3
             }
         }
-    )
+    },
+    responses={
+        201: {
+            "description": "Invitation sent successfully",
+            "example": {
+                "message": "Invitation sent successfully.",
+                "error": False
+            }
+        },
+        400: {
+            "description": "MissingEmailError",
+            "example": {
+                "message": "Email is required.",
+                "error": True
+            }
+        },
+        404: {
+            "description": "Role not found",
+            "example": {
+                "message": "The role with ID 3 does not exist.",
+                "error": True
+            }
+        },
+        409: {
+            "description": "User already has superadmin privileges",
+            "example": {
+                "message": "An invitation for this email is already pending.",
+                "error": True
+            }
+        },
+        500: {
+            "description": "Super Admin Role does not exist",
+            "example": {
+                "message": "Superadmin role not found.",
+                "error": True
+            }
+        }
+    },
+)
