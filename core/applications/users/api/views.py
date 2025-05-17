@@ -47,7 +47,13 @@ from rest_framework.viewsets import ViewSet
 from core.applications.users.models import AccountDeletionReason, Profile, User, Role, RoleInvitation
 from core.applications.users.token import default_token_generator, default_invitation_token_generator
 from core.helpers.custom_exceptions import CustomError
-from core.applications.users.api.serializers import AdminRegistrationSerializer, AdminUserDetailSerializer, AdminUserSerializer, BulkDeleteUserSerializer, CustomUserCreateSerializer, EmailAndTokenSerializer, EmailSubmissionSerializer, OTPVerificationSerializer, PasswordResetSerializer, PasswordRetypeSerializer, PasswordSetSerializer, ProfileSerializers, SetNewPasswordSerializer, SoftDeletedUserSerializer, SuperUserTokenObtainPairSerializer, UserDeleteSerializer, UserSerializer, VerifyOTPSerializer, RoleSerializer
+from core.applications.users.api.serializers import (
+    AdminRegistrationSerializer, AdminUserDetailSerializer, AdminUserSerializer, BulkDeleteUserSerializer,
+    CustomUserCreateSerializer, EmailAndTokenSerializer, EmailSubmissionSerializer, OTPVerificationSerializer,
+    PasswordResetSerializer, PasswordRetypeSerializer, PasswordSetSerializer, ProfileSerializers, SetNewPasswordSerializer,
+    SoftDeletedUserSerializer, SuperUserTokenObtainPairSerializer, UserDeleteSerializer, UserSerializer, VerifyOTPSerializer,
+    RoleSerializer, SuperAdminSerializer
+)
 from core.helpers.authentication import CustomJWTAuthentication
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -64,7 +70,8 @@ from core.applications.users.api.schemas import(
     login_validate_password_schema, validate_password_reset_token_schema,  reset_password_schema,
     admin_activate_user_schema, set_new_password_schema, admin_extend_viewer,
     admin_grouped_permissions_schema, create_role_schema, delete_role_schema, assign_admin_schema,
-    invite_admin_schema, remove_admin_schema, accept_invitation_schema, validate_invitation_schema
+    invite_admin_schema, remove_admin_schema, accept_invitation_schema, validate_invitation_schema,
+    super_admin_view_schema, super_admin_transfer_schema, super_admin_invite_schema
 )
 from django.conf import settings as django_settings
 from django.db import transaction
@@ -1553,12 +1560,74 @@ class SuperUserViewSet(viewsets.ModelViewSet):
             "error": False
         }, status=status.HTTP_200_OK)
 
+class MissingEmailError(ValidationError):
+    """Raised when no email is provided."""
+
+class DuplicateInvitationError(ValidationError):
+    """Raised when there’s already a pending invitation for that email."""
+
+class RoleInvitationService:
+    def __init__(self, email, name, role, invited_by, request):
+        self.email = email
+        self.name = name
+        self.role = role
+        self.invited_by = invited_by
+        self.request = request
+
+    def send(self):
+        self._validate_email()
+        self._check_existing_invitation()
+
+        token = self._generate_token()
+
+        invitation = self._create_invitation(token)
+        self._send_email(token)
+
+        return invitation
+
+    def _validate_email(self):
+        if not self.email:
+            raise MissingEmailError("Email is required.")
+
+    def _check_existing_invitation(self):
+        existing_invitation = self.role.invitations.filter(
+            email=self.email,
+            accepted_at__isnull=True
+        ).first()
+
+        if existing_invitation:
+            raise DuplicateInvitationError("An invitation for this email is already pending.")
+
+    def _generate_token(self):
+        return default_invitation_token_generator.make_token(self.email)
+
+    def _create_invitation(self, token):
+        return RoleInvitation.objects.create(
+            email=self.email,
+            name=self.name,
+            role=self.role,
+            token=token,
+            invited_by=self.invited_by
+        )
+
+    def _send_email(self, token):
+        email_message = RoleInvitationEmail(
+            context={
+                "email": self.email,
+                "name": self.name,
+                "role": self.role.name,
+                "token": token,
+                "request": self.request,
+            }
+        )
+        email_message.send([self.email])
+
 class GroupedPermissionsView(APIView):
     """
     Retrieve all permissions grouped by app label.
     Accessible only by superadmins.
     """
-    permission_classes = [IsAuthenticated, IsSuperUser]
+    permission_classes = [IsSuperUser]
 
     @admin_grouped_permissions_schema
     def get(self, request):
@@ -1632,58 +1701,32 @@ class RoleViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="invite-admin")
     def invite_admin(self, request, pk=None):
         role = self.get_object()
-
         email = request.data.get("email")
         name = request.data.get("name", "")
 
-        if not email:
-            return Response(
-                {
-                    "message": "Email is required.",
-                    "error": True
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        existing_invitation = role.invitations.filter(email=email, accepted_at__isnull=True).first()
-        if existing_invitation:
-            return Response(
-                {
-                    "message": "An invitation for this email is already pending.",
-                    "error": True
-                },
-                status=status.HTTP_409_CONFLICT
-            )
-
-        token = default_invitation_token_generator.make_token(email)
-
-        # Create RoleInvitation record
-        print("Sending invitation email to", email)
-        invitation = RoleInvitation.objects.create(
+        service = RoleInvitationService(
             email=email,
             name=name,
             role=role,
-            token=token,
-            invited_by=request.user
+            invited_by=request.user,
+            request=request
         )
 
-        # Prepare and send templated email with context
-        email_message = RoleInvitationEmail(
-            context={
-                "email": email,
-                "name": name,
-                "role": role.name,
-                "token": token,
-                "request": request,
-            }
-        )
-        email_message.send([email])
+        try:
+            service.send()
+        except MissingEmailError as e:
+            return Response(
+                {"message": str(e), "error": True},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except DuplicateInvitationError as e:
+            return Response(
+                {"message": str(e), "error": True},
+                status=status.HTTP_409_CONFLICT
+            )
 
         return Response(
-            {
-                "message": "Invitation sent successfully.",
-                "error": False
-            },
+            {"message": "Invitation sent successfully.", "error": False},
             status=status.HTTP_201_CREATED
         )
 
@@ -1772,10 +1815,18 @@ class AcceptInvitationView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Create user if not exist, or activate existing
-        user, created = User.objects.get_or_create(email=email)
+        # user, created = User.objects.get_or_create(email=email)
+        if User.objects.filter(email=email).exists():
+            return Response(
+                {"message": "User already exists", "error": True},
+                status=status.HTTP_409_CONFLICT
+           )
+        user = User(email=email)
         user.set_password(password)
         user.is_active = True
+        user.is_admin = True
+        if invitation.role.name == "Super Admin":
+            user.is_superuser = True
         user.save()
 
         # Assign role to user
@@ -1824,288 +1875,120 @@ class ValidateInvitationTokenView(APIView):
         )
 
 
-# super admin ---- testing
-
-
-class SuperAdminViewSet(viewsets.ModelViewSet):
+@super_admin_view_schema
+class SuperAdminViewSet(viewsets.ReadOnlyModelViewSet):
     """
-    ViewSet for superadmin accounts.
-    - Only users with is_superuser=True will be listed.
-    - Only superadmins (checked by IsSuperUser) can access these endpoints.
-    - Safe field set: name & email editable; everything else read-only.
+    Manage superadmin accounts.
+    Only users with superuser status can access these endpoints.
     """
     permission_classes = [IsSuperUser]
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ["is_active"]
-    search_fields = ["email", "name"]
-    ordering_fields = ["date_joined"]
+    serializer_class = SuperAdminSerializer
+    lookup_field = "pk"
+    ordering_fields = ["name", "email"]
+    ordering = ["name"]
 
     def get_queryset(self):
-        return User.objects.filter(is_superuser=True).select_related('profile').prefetch_related('groups', 'user_permissions')
-        # qs = User.objects.filter(is_superuser=True)
-        # return qs.annotate(
-        #     total_flight_bookings=Count("user_bookings__flight_booking", distinct=True),
-        #     total_car_bookings=Count("user_bookings__car_booking", distinct=True),
-        #     total_bookings=Count("user_bookings", distinct=True),
-        # )
+        return User.objects.filter(is_superuser=True).only("id", "name", "email")
 
-    def get_serializer_class(self):
-        if self.action in ("retrieve", "update", "partial_update"):
-            return AdminUserDetailSerializer
-        return AdminUserSerializer
-
-    # def partial_update(self, request, *args, **kwargs):
-    #     # Ensure only name/email can change:
-    #     for field in set(request.data) - {"name", "email"}:
-    #         request.data.pop(field, None)
-    #     response = super().partial_update(request, *args, **kwargs)
-    #     logger.info(f"Superadmin {self.get_object().email} updated by {request.user.email}")
-    #     return response
-
-    def update(self, request, *args, **kwargs):
-        return Response(
-            {
-                "message": "Editing superadmin details is not allowed.",
-                "error": True
-            },
-            status=status.HTTP_403_FORBIDDEN
-        )
-
-
-    @action(detail=False, methods=["post"], url_path="transfer-superadmin")
-    def transfer_superadmin(self, request):
+    @super_admin_transfer_schema
+    @action(detail=False, methods=["post"], url_path="transfer")
+    @transaction.atomic
+    def transfer(self, request):
         """
-        Transfer superadmin privileges to another user via email.
-        Payload must include:
-        - `email`: recipient's email
-        - `transfer_action`: 'revoke' or 'change_role'
-        - `new_role_id`: required if action is 'change_role'
+        Transfer superadmin role to another user.
+        Options:
+        - Promote user to superadmin
+        - Downgrade or revoke current superadmin
         """
-        email = request.data.get("email", "").strip().lower()
-        transfer_action = request.data.get("transfer_action", "").strip().lower()
-        new_role_id = request.data.get("new_role_id")
+        target_email = request.data.get("email")
+        downgrade_to_role_id = request.data.get("downgrade_to_role_id")
+        revoke = request.data.get("revoke", False)
 
-        if not email or not transfer_action:
+        if not target_email:
             return Response(
-                {
-                    "message": "Both 'email' and 'transfer_action' are required.",
-                    "error": True
-                },
+                {"message": "Target user email is required.", "error": True},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        if email == request.user.email:
-            return Response(
-                {
-                    "message": "You cannot transfer superadmin rights to yourself.",
-                    "error": True
-                },
-                status=status.HTTP_403_FORBIDDEN
-            )
-
         try:
-            new_superadmin = User.objects.get(email=email)
+            target_user = User.objects.get(email=target_email)
         except User.DoesNotExist:
             return Response(
-                {
-                    "message": f"No user found with email: {email}.",
-                    "error": True
-                },
+                {"message": "User with this email does not exist.", "error": True},
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        if new_superadmin.is_superuser:
+        if target_user.is_superuser:
             return Response(
-                {
-                    "message": f"{email} is already a superadmin.",
-                    "error": True
-                },
+                {"message": "Target user is already a superadmin.", "error": True},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        if transfer_action not in {"revoke", "change_role"}:
-            return Response(
-                {
-                    "message": "transfer_action must be 'revoke' or 'change_role'.",
-                    "error": True
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        target_user.is_superuser = True
+        target_user.save()
 
-        if transfer_action == "change_role" and not new_role_id:
-            return Response(
-                {
-                    "message": "'new_role_id' is required when changing role.",
-                    "error": True
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        current_user = request.user
+        if downgrade_to_role_id:
+            try:
+                role = Role.objects.get(id=downgrade_to_role_id)
+            except Role.DoesNotExist:
+                return Response(
+                    {"message": "Specified role does not exist.", "error": True},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            current_user.is_superuser = False
+            role.assign_user(current_user)
+
+        elif revoke:
+            current_user.is_superuser = False
+            current_user.groups.clear()
+
+        current_user.save()
+
+        return Response(
+            {
+                "message": f"Superadmin privileges transferred to {target_user.email}.",
+                "error": False
+            },
+            status=status.HTTP_200_OK
+        )
+
+    @super_admin_invite_schema
+    @action(detail=False, methods=["post"], url_path="invite")
+    def invite(self, request):
+        email = request.data.get("email")
+        name = request.data.get("name", "")
 
         try:
-            with transaction.atomic():
-                # Promote new user
-                new_superadmin.is_superuser = True
-                new_superadmin.save()
+            role = Role.objects.get(name__iexact="Super Admin")
+        except Role.DoesNotExist:
+            return Response({"message": "Superadmin role not found.", "error": True}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-                # Demote current user
-                request.user.is_superuser = False
-                if transfer_action == "change_role":
-                    request.user.role_id = new_role_id
-                request.user.save()
+        try:
+            service = RoleInvitationService(
+                email=email,
+                name=name,
+                role=role,
+                invited_by=request.user,
+                request=request
+            )
 
-        except Exception as e:
+            service.send
+        except MissingEmailError as e:
             return Response(
-                {
-                    "message": "An unexpected error occurred during the transfer.",
-                    "error": True
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                {"message": str(e), "error": True},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except DuplicateInvitationError as e:
+            return Response(
+                {"message": str(e), "error": True},
+                status=status.HTTP_409_CONFLICT
             )
 
         return Response(
-            {
-                "message": f"{email} has been promoted to superadmin.",
-                "previous_superadmin_action": transfer_action,
-                "error": False
-            },
-            status=status.HTTP_200_OK
+            {"message": "Invitation sent successfully.", "error": False},
+            status=status.HTTP_201_CREATED
         )
 
 
-
-
-
-    # old
-
-    @action(detail=False, methods=["post"], url_path="invite-superadmin")
-    def invite_superadmin(self, request):
-        """
-        Invite someone to become a superadmin by email.
-        - If user exists, return error.
-        - If not, create inactive user with token, send email with link to set password.
-        """
-        email = request.data.get("email")
-        action = request.data.get("action")  # 'revoke' or 'change_role'
-        new_role = request.data.get("new_role")  # optional
-
-        if User.objects.filter(email=email).exists():
-            return Response({"error": "A user with this email already exists."}, status=400)
-
-        # Create inactive user (or user with is_active=False)
-        temp_user = User.objects.create_user(email=email, is_active=False)
-        token = str(uuid.uuid4())
-        temp_user.invite_token = token  # Add field if needed
-        temp_user.save()
-
-        # Store transfer intent somewhere? (optional: add to a temporary table)
-        # Send email
-        # send_mail(
-        #     subject="You're invited as Superadmin",
-        #     message=f"Click here to set password and become superadmin: {FRONTEND_URL}/accept-invite/{token}",
-        #     from_email=settings.DEFAULT_FROM_EMAIL,
-        #     recipient_list=[email],
-        # )
-
-        logger.info(f"{request.user.email} invited {email} to become a superadmin")
-        return Response({"message": "Invitation sent successfully."})
-
-
-        #  here
-
-
-        @action(detail=True, methods=["patch"], url_path="promote")
-        def promote_to_superadmin(self, request, pk=None):
-            """
-            Promote a user to superadmin.
-            """
-            user = self.get_object()
-            if user.is_superuser:
-                return Response(
-                    {
-                        "message": "User is already a superadmin.",
-                        "error": True
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            user.is_superuser = True
-            user.save()
-            return Response(
-                {"message": f"{user.email} is now a superadmin.", "error": False},
-                status=status.HTTP_200_OK
-            )
-
-    @action(detail=True, methods=["patch"], url_path="revoke-superadmin")
-    def revoke_superadmin(self, request, pk=None):
-        """
-        revokes super admin privileges
-        """
-        with transaction.atomic():
-            user = self.get_object()
-
-            if user == request.user:
-                return Response(
-                    {
-                        "message": "You cannot revoke your own superadmin status.",
-                        "error": True
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            active_superadmins = User.objects.filter(is_superuser=True).exclude(pk=user.pk).count()
-
-            if active_superadmins == 0:
-                return Response(
-                    {
-                        "message": "There must be at least one superadmin remaining.",
-                        "error": True
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            user.is_superuser = False
-            user.save()
-            logger.info(f"Superadmin {user.email} deactivated by {request.user.email}")
-
-            return Response(
-                {
-                    "message": f"{user.email} is no longer a superadmin.",
-                    "error": False
-                },
-                status=status.HTTP_200_OK
-            )
-
-    @action(detail=True, methods=["patch"], url_path="deactivate")
-    def deactivate_superadmin(self, request, pk=None):
-        user = self.get_object()
-
-        if user == request.user:
-            return Response(
-                {
-                    "message": "You cannot deactivate your own account.",
-                    "error": True
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        active_superadmins = User.objects.filter(is_superuser=True, is_active=True).exclude(pk=user.pk).count()
-
-        if active_superadmins == 0:
-            return Response(
-                {
-                    "message": "There must be at least one active superadmin.",
-                    "error": True
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        user.is_active = False
-        user.save()
-        logger.info(f"Superadmin {user.email} deactivated by {request.user.email}")
-
-        return Response(
-            {
-                "message": f"{user.email} has been deactivated.",
-                "error": False
-            },
-            status=status.HTTP_200_OK
-        )
+# check figma if invite does it disable current SU

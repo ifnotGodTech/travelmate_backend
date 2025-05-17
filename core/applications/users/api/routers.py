@@ -33,7 +33,7 @@ router.register("profile", ProfileViewSet, basename="profile")
 router.register("superuser", SuperUserViewSet, basename="admin-users")
 
 router.register("roles", RoleViewSet, basename="roles")
-router.register("superadmins", SuperAdminViewSet, basename="superadmins")
+router.register("superadmin", SuperAdminViewSet, basename="superadmin")
 
 app_name = f"{PREFIX}"
 urlpatterns = router.urls

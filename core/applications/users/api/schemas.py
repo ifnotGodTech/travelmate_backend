@@ -585,3 +585,73 @@ validate_invitation_schema = extend_schema(
         400: OpenApiResponse(description="Missing, invalid or already-used token."),
     }
 )
+
+super_admin_view_schema = extend_schema_view(
+    list=extend_schema(
+        summary="List superadmins",
+        description="Retrieve a list of all users with superadmin privileges.",
+        responses={200: OpenApiResponse(description="List of superadmins")}
+    ),
+    retrieve=extend_schema(
+        summary="Retrieve superadmin",
+        description="Get detailed information about a specific superadmin.",
+        responses={200: AdminUserDetailSerializer}
+    )
+)
+
+super_admin_transfer_schema = extend_schema(
+    methods=["POST"],
+    operation_id="transfer_superadmin_privilege",
+    summary="Transfer Superadmin Privilege",
+    description=(
+        "Transfer superadmin rights to another existing user (must not already be a superadmin). "
+        "Current superadmin can either revoke their own access entirely or downgrade to a role."
+    ),
+    request={
+        "application/json": {
+            "type": "object",
+            "properties": {
+                "email": {"type": "string", "format": "email"},
+                "downgrade_to_role_id": {"type": "integer"},
+                "revoke": {"type": "boolean"}
+            },
+            "required": ["email"]
+        }
+    },
+    responses={
+        200: OpenApiExample(
+            "Successful Transfer",
+            value={
+                "message": "Superadmin privileges transferred to newadmin@example.com.",
+                "error": False
+            },
+            status_codes=["200"]
+        ),
+        400: OpenApiExample(
+            "Invalid request",
+            value={"message": "Target user email is required.", "error": True},
+            status_codes=["400"]
+        ),
+        404: OpenApiExample(
+            "User not found",
+            value={"message": "User with this email does not exist.", "error": True},
+            status_codes=["404"]
+        )
+    },
+)
+
+super_admin_invite_schema = extend_schema(
+        methods=["POST"],
+        summary="Invite a Superadmin",
+        description="Send an invitation email to promote a new superadmin by email.",
+        request={
+            "application/json": {
+                "type": "object",
+                "properties": {
+                    "email": {"type": "string", "format": "email"},
+                    "name": {"type": "string"}
+                },
+                "required": ["email"]
+            }
+        }
+    )

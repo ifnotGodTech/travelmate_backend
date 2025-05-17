@@ -827,3 +827,19 @@ class RoleSerializer(serializers.ModelSerializer):
             {"email": invite.email, "name": invite.name,}
             for invite in invitations
         ]
+
+
+class SuperAdminSerializer(serializers.ModelSerializer):
+    """
+    Serializer for superadmin’s details.
+    """
+    class Meta:
+        model = User
+        fields = [
+            "id",
+            "email",
+            "name",
+            "is_active",
+            "is_superuser"
+        ]
+        read_only_fields = fields
